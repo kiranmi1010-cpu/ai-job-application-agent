@@ -75,9 +75,12 @@ export default function Sidebar({ currentView, setCurrentView, pendingApprovals,
             <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse" />
             <span className="text-xs text-green-400 font-medium">AI Agent Active</span>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 mb-1">
             <Zap size={12} className="text-yellow-400" />
-            <span className="text-xs text-slate-400">Scanning 6 new jobs...</span>
+            <span className="text-xs text-slate-400">Resume-based search running</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-slate-500">12 skills → 156 matches found</span>
           </div>
         </div>
 
@@ -109,9 +112,10 @@ export default function Sidebar({ currentView, setCurrentView, pendingApprovals,
 
         {/* Bottom section */}
         <div className="p-4 mx-3 mb-3 bg-gradient-to-r from-blue-600/10 to-purple-600/10 rounded-xl border border-slate-700/50">
-          <p className="text-xs text-slate-400 mb-1">Applications Today</p>
-          <p className="text-2xl font-bold text-white">12</p>
-          <p className="text-xs text-green-400 mt-1">↑ 3 interviews scheduled</p>
+          <p className="text-xs text-slate-400 mb-1">Auto-Matched Today</p>
+          <p className="text-2xl font-bold text-white">24</p>
+          <p className="text-xs text-green-400 mt-1">↑ From resume analysis</p>
+          <p className="text-xs text-slate-500 mt-0.5">3 interviews scheduled</p>
         </div>
       </motion.aside>
     </>

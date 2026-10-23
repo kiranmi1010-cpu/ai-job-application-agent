@@ -14,7 +14,9 @@ import {
   Settings as SettingsIcon,
   User,
   Target,
-  Clock
+  Clock,
+  Brain,
+  TrendingUp
 } from 'lucide-react';
 
 export default function Settings() {
@@ -253,11 +255,109 @@ export default function Settings() {
         </div>
       </div>
 
+      {/* Resume-Based Auto Search */}
+      <div className="bg-white rounded-2xl border border-slate-100 shadow-sm">
+        <div className="p-5 border-b border-slate-100">
+          <div className="flex items-center gap-2">
+            <h2 className="text-lg font-semibold text-slate-900">Resume-Based Auto Search</h2>
+            <span className="px-2 py-0.5 bg-purple-100 text-purple-700 rounded-full text-xs font-medium">AI Powered</span>
+          </div>
+          <p className="text-sm text-slate-500">Configure how the AI uses your resume to automatically find and apply to jobs</p>
+        </div>
+        <div className="p-5 space-y-5">
+          <div className="flex items-center justify-between p-4 bg-purple-50 rounded-xl border border-purple-100">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 bg-purple-100 rounded-xl flex items-center justify-center">
+                <Brain size={18} className="text-purple-600" />
+              </div>
+              <div>
+                <p className="text-sm font-medium text-purple-900">Auto-Search from Resume</p>
+                <p className="text-xs text-purple-600">AI continuously scans for jobs matching your resume skills</p>
+              </div>
+            </div>
+            <button className="w-12 h-6 bg-blue-600 rounded-full transition-colors">
+              <div className="w-5 h-5 bg-white rounded-full shadow-sm translate-x-6" />
+            </button>
+          </div>
+
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 bg-blue-100 rounded-xl flex items-center justify-center">
+                <Zap size={18} className="text-blue-600" />
+              </div>
+              <div>
+                <p className="text-sm font-medium text-slate-900">Search Frequency</p>
+                <p className="text-xs text-slate-500">How often AI rescans job boards with your profile</p>
+              </div>
+            </div>
+            <select className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-700">
+              <option>Every 2 hours</option>
+              <option>Every 6 hours</option>
+              <option>Every 12 hours</option>
+              <option>Once daily</option>
+            </select>
+          </div>
+
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 bg-green-100 rounded-xl flex items-center justify-center">
+                <Target size={18} className="text-green-600" />
+              </div>
+              <div>
+                <p className="text-sm font-medium text-slate-900">Skill-Based Matching</p>
+                <p className="text-xs text-slate-500">Use extracted skills to find roles requiring those technologies</p>
+              </div>
+            </div>
+            <button className="w-12 h-6 bg-blue-600 rounded-full transition-colors">
+              <div className="w-5 h-5 bg-white rounded-full shadow-sm translate-x-6" />
+            </button>
+          </div>
+
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 bg-orange-100 rounded-xl flex items-center justify-center">
+                <TrendingUp size={18} className="text-orange-600" />
+              </div>
+              <div>
+                <p className="text-sm font-medium text-slate-900">Experience Level Matching</p>
+                <p className="text-xs text-slate-500">Match job seniority to your years of experience</p>
+              </div>
+            </div>
+            <button className="w-12 h-6 bg-blue-600 rounded-full transition-colors">
+              <div className="w-5 h-5 bg-white rounded-full shadow-sm translate-x-6" />
+            </button>
+          </div>
+
+          {/* Resume Summary */}
+          <div className="p-4 bg-slate-50 rounded-xl border border-slate-200">
+            <p className="text-xs font-semibold text-slate-500 uppercase mb-2">Current Resume Profile Used for Search</p>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              <div>
+                <p className="text-lg font-bold text-slate-900">12</p>
+                <p className="text-xs text-slate-500">Skills</p>
+              </div>
+              <div>
+                <p className="text-lg font-bold text-slate-900">Senior</p>
+                <p className="text-xs text-slate-500">Level</p>
+              </div>
+              <div>
+                <p className="text-lg font-bold text-slate-900">5+</p>
+                <p className="text-xs text-slate-500">Years Exp</p>
+              </div>
+              <div>
+                <p className="text-lg font-bold text-slate-900">4</p>
+                <p className="text-xs text-slate-500">Target Roles</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
       {/* Job Preferences */}
       <div className="bg-white rounded-2xl border border-slate-100 shadow-sm">
         <div className="p-5 border-b border-slate-100">
           <h2 className="text-lg font-semibold text-slate-900">Job Preferences</h2>
-          <p className="text-sm text-slate-500">Tell the AI what kind of jobs you're looking for</p>
+          <p className="text-sm text-slate-500">Additional filters for AI job search (combined with resume analysis)</p>
         </div>
         <div className="p-5 space-y-4">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
