@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useDropzone } from 'react-dropzone';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Upload,
@@ -14,27 +15,15 @@ import {
   Search,
   ArrowRight,
   Target,
-  Zap,
   Star,
   MapPin,
-  DollarSign
+  DollarSign,
+  X,
+  AlertCircle
 } from 'lucide-react';
-
-interface ResumeData {
-  name: string;
-  email: string;
-  phone: string;
-  skills: string[];
-  experience: { title: string; company: string; duration: string; description: string }[];
-  education: { degree: string; institution: string; year: string }[];
-}
-
-const autoSearchResults = [
-  { title: 'Senior React Engineer', company: 'Vercel', match: 97, location: 'Remote', salary: '$180K-$240K' },
-  { title: 'Staff Frontend Engineer', company: 'Figma', match: 94, location: 'San Francisco', salary: '$200K-$280K' },
-  { title: 'Full Stack Developer', company: 'Linear', match: 91, location: 'Remote', salary: '$160K-$220K' },
-  { title: 'Senior UI Engineer', company: 'Notion', match: 89, location: 'New York', salary: '$170K-$230K' },
-];
+import { parseResumeFile, parseResumeText, ParsedResume } from '../services/resumeParser';
+import { searchJobs, JobListing } from '../services/jobSearch';
+import { dbHelpers } from '../db';
 
 export default function ResumeUpload() {
   const [uploaded, setUploaded] = useState(false);
@@ -42,82 +31,248 @@ export default function ResumeUpload() {
   const [parsed, setParsed] = useState(false);
   const [autoSearching, setAutoSearching] = useState(false);
   const [searchComplete, setSearchComplete] = useState(false);
-  const [resumeData, setResumeData] = useState<ResumeData | null>(null);
+  const [resumeData, setResumeData] = useState<ParsedResume | null>(null);
   const [searchProgress, setSearchProgress] = useState(0);
+  const [foundJobs, setFoundJobs] = useState<JobListing[]>([]);
+  const [error, setError] = useState<string | null>(null);
 
-  const handleUpload = () => {
-    setUploaded(true);
-    setParsing(true);
-    setTimeout(() => {
-      setParsing(false);
-      setParsed(true);
-      setResumeData({
-        name: 'Alex Johnson',
-        email: 'alex.johnson@email.com',
-        phone: '+1 (555) 123-4567',
-        skills: ['React', 'TypeScript', 'Node.js', 'Python', 'AWS', 'GraphQL', 'Docker', 'PostgreSQL', 'Git', 'CI/CD', 'REST APIs', 'System Design'],
-        experience: [
-          { title: 'Senior Frontend Engineer', company: 'TechCorp Inc.', duration: '2021 - Present', description: 'Led frontend architecture for a SaaS platform serving 2M+ users. Built design system used across 15 products.' },
-          { title: 'Full Stack Developer', company: 'StartupXYZ', duration: '2019 - 2021', description: 'Developed and maintained multiple client-facing applications using React and Node.js. Improved performance by 40%.' },
-          { title: 'Junior Developer', company: 'WebAgency', duration: '2017 - 2019', description: 'Built responsive web applications for various clients. Collaborated with design team to implement pixel-perfect UIs.' }
-        ],
-        education: [
-          { degree: 'B.S. Computer Science', institution: 'University of California', year: '2017' },
-        ]
-      });
-      // Start auto-search after parsing
-      setTimeout(() => {
-        setAutoSearching(true);
-      }, 1000);
-    }, 2500);
+  // Load existing resume on mount
+  useEffect(() => {
+    loadExistingResume();
+  }, []);
+
+  const loadExistingResume = async () => {
+    try {
+      const existingResume = await dbHelpers.getResume();
+      if (existingResume) {
+        setResumeData({
+          rawText: existingResume.rawText,
+          ...existingResume.parsedData
+        });
+        setUploaded(true);
+        setParsed(true);
+        
+        // Load existing jobs
+        const jobs = await dbHelpers.getJobsByMatchScore(10);
+        if (jobs.length > 0) {
+          setFoundJobs(jobs as any);
+          setSearchComplete(true);
+        }
+      }
+    } catch (error) {
+      console.error('Error loading resume:', error);
+    }
   };
 
-  useEffect(() => {
-    if (autoSearching) {
-      const interval = setInterval(() => {
-        setSearchProgress(prev => {
-          if (prev >= 100) {
-            clearInterval(interval);
-            setAutoSearching(false);
-            setSearchComplete(true);
-            return 100;
-          }
-          return prev + 3;
-        });
-      }, 80);
-      return () => clearInterval(interval);
+  const onDrop = async (acceptedFiles: File[]) => {
+    if (acceptedFiles.length === 0) return;
+
+    const file = acceptedFiles[0];
+    setError(null);
+    setUploaded(true);
+    setParsing(true);
+
+    try {
+      // Parse the resume
+      const parsed = await parseResumeFile(file);
+      setResumeData(parsed);
+      setParsed(true);
+
+      // Save to database
+      await dbHelpers.saveResume({
+        fileName: file.name,
+        rawText: parsed.rawText,
+        parsedData: {
+          name: parsed.name,
+          email: parsed.email,
+          phone: parsed.phone,
+          skills: parsed.skills,
+          experience: parsed.experience,
+          education: parsed.education
+        },
+        uploadedAt: new Date()
+      });
+
+      // Start auto-search after parsing
+      setTimeout(() => {
+        startAutoSearch(parsed);
+      }, 1000);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to parse resume');
+      setUploaded(false);
+      setParsing(false);
     }
-  }, [autoSearching]);
+  };
+
+  const startAutoSearch = async (resume: ParsedResume) => {
+    setAutoSearching(true);
+    setSearchProgress(0);
+
+    try {
+      // Simulate progress while searching
+      const progressInterval = setInterval(() => {
+        setSearchProgress(prev => {
+          if (prev >= 90) {
+            clearInterval(progressInterval);
+            return 90;
+          }
+          return prev + 5;
+        });
+      }, 200);
+
+      // Search for jobs
+      const jobs = await searchJobs(resume, false); // Set to true if you have API key
+      
+      clearInterval(progressInterval);
+      setSearchProgress(100);
+
+      // Save jobs to database
+      await dbHelpers.clearJobs();
+      await dbHelpers.saveJobs(jobs.map(job => ({
+        ...job,
+        status: 'pending' as const,
+        foundAt: new Date()
+      })));
+
+      setFoundJobs(jobs);
+      setAutoSearching(false);
+      setSearchComplete(true);
+    } catch (error) {
+      console.error('Error searching jobs:', error);
+      setAutoSearching(false);
+      setError('Failed to search for jobs. Please try again.');
+    }
+  };
+
+  const handleReparse = async () => {
+    if (!resumeData) return;
+    
+    setParsed(false);
+    setParsing(true);
+    
+    try {
+      const parsed = parseResumeText(resumeData.rawText);
+      setResumeData({ ...resumeData, ...parsed });
+      setParsed(true);
+      
+      // Update in database
+      const existingResume = await dbHelpers.getResume();
+      if (existingResume?.id) {
+        await dbHelpers.saveResume({
+          fileName: 'Updated Resume',
+          rawText: resumeData.rawText,
+          parsedData: {
+            name: parsed.name,
+            email: parsed.email,
+            phone: parsed.phone,
+            skills: parsed.skills,
+            experience: parsed.experience,
+            education: parsed.education
+          },
+          uploadedAt: new Date()
+        });
+      }
+    } catch (error) {
+      console.error('Error reparsing:', error);
+    }
+  };
+
+  const handleDeleteResume = async () => {
+    if (!confirm('Are you sure you want to delete your resume? This will also remove all matched jobs.')) {
+      return;
+    }
+    
+    try {
+      const existingResume = await dbHelpers.getResume();
+      if (existingResume?.id) {
+        await dbHelpers.deleteResume(existingResume.id);
+      }
+      await dbHelpers.clearJobs();
+      
+      setUploaded(false);
+      setParsed(false);
+      setResumeData(null);
+      setFoundJobs([]);
+      setSearchComplete(false);
+    } catch (error) {
+      console.error('Error deleting resume:', error);
+    }
+  };
+
+  const { getRootProps, getInputProps, isDragActive } = useDropzone({
+    onDrop,
+    accept: {
+      'application/pdf': ['.pdf'],
+      'application/msword': ['.doc'],
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document': ['.docx'],
+      'text/plain': ['.txt']
+    },
+    maxFiles: 1,
+    maxSize: 10 * 1024 * 1024 // 10MB
+  });
 
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div>
-        <h1 className="text-2xl sm:text-3xl font-bold text-slate-900">My Resume</h1>
-        <p className="text-slate-500 mt-1">Upload your resume — AI will automatically analyze it and find matching jobs</p>
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl sm:text-3xl font-bold text-slate-900">My Resume</h1>
+          <p className="text-slate-500 mt-1">Upload your resume — AI will automatically analyze it and find matching jobs</p>
+        </div>
+        {parsed && (
+          <button
+            onClick={handleDeleteResume}
+            className="flex items-center gap-2 px-4 py-2 bg-red-50 text-red-600 rounded-xl text-sm font-medium hover:bg-red-100"
+          >
+            <X size={16} />
+            Delete Resume
+          </button>
+        )}
       </div>
+
+      {/* Error Message */}
+      {error && (
+        <motion.div
+          initial={{ opacity: 0, y: -10 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="bg-red-50 border border-red-200 rounded-xl p-4 flex items-center gap-3"
+        >
+          <AlertCircle size={20} className="text-red-600" />
+          <div className="flex-1">
+            <p className="text-sm font-medium text-red-900">{error}</p>
+          </div>
+          <button onClick={() => setError(null)} className="text-red-600 hover:text-red-700">
+            <X size={16} />
+          </button>
+        </motion.div>
+      )}
 
       {/* Upload Area */}
       {!uploaded && (
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
-          className="bg-white rounded-2xl border-2 border-dashed border-slate-200 p-12 text-center hover:border-blue-400 transition-colors"
         >
+          <div
+            {...getRootProps()}
+            className={`bg-white rounded-2xl border-2 border-dashed p-12 text-center cursor-pointer transition-colors ${
+              isDragActive ? 'border-blue-400 bg-blue-50' : 'border-slate-200 hover:border-blue-400'
+            }`}
+          >
+          <input {...getInputProps()} />
           <div className="w-16 h-16 bg-blue-50 rounded-2xl flex items-center justify-center mx-auto mb-4">
             <Upload size={28} className="text-blue-600" />
           </div>
-          <h3 className="text-lg font-semibold text-slate-900">Upload Your Resume</h3>
+          <h3 className="text-lg font-semibold text-slate-900">
+            {isDragActive ? 'Drop your resume here...' : 'Upload Your Resume'}
+          </h3>
           <p className="text-sm text-slate-500 mt-2 max-w-md mx-auto">
-            Drop your resume here or click to browse. Our AI will parse your skills, experience, and automatically search for matching job openings across all major platforms.
+            Drop your resume here or click to browse. Our AI will parse your skills, experience, and automatically search for matching job openings.
           </p>
-          <button
-            onClick={handleUpload}
-            className="mt-6 px-6 py-3 bg-gradient-to-r from-blue-600 to-purple-600 text-white rounded-xl font-medium text-sm hover:opacity-90 transition-opacity"
-          >
+          <button className="mt-6 px-6 py-3 bg-gradient-to-r from-blue-600 to-purple-600 text-white rounded-xl font-medium text-sm hover:opacity-90 transition-opacity">
             Choose File
           </button>
-          <p className="text-xs text-slate-400 mt-4">Max file size: 10MB • PDF, DOC, DOCX</p>
+          <p className="text-xs text-slate-400 mt-4">Max file size: 10MB • PDF, DOC, DOCX, TXT</p>
 
           {/* How it works */}
           <div className="mt-8 pt-6 border-t border-slate-100">
@@ -143,6 +298,7 @@ export default function ResumeUpload() {
                 <span className="text-xs font-medium text-orange-800">Match & Apply</span>
               </div>
             </div>
+          </div>
           </div>
         </motion.div>
       )}
@@ -177,11 +333,18 @@ export default function ResumeUpload() {
           {/* Success Banner */}
           <div className="bg-green-50 border border-green-200 rounded-xl p-4 flex items-center gap-3">
             <CheckCircle size={20} className="text-green-600" />
-            <div>
+            <div className="flex-1">
               <p className="text-sm font-medium text-green-900">Resume parsed successfully!</p>
-              <p className="text-xs text-green-600">AI has extracted your profile and is now searching for matching jobs.</p>
+              <p className="text-xs text-green-600">
+                {searchComplete 
+                  ? `Found ${foundJobs.length} matching jobs based on your profile.`
+                  : 'AI is now searching for matching jobs.'}
+              </p>
             </div>
-            <button className="ml-auto flex items-center gap-1 px-3 py-1.5 bg-green-100 text-green-700 rounded-lg text-xs font-medium hover:bg-green-200">
+            <button 
+              onClick={handleReparse}
+              className="flex items-center gap-1 px-3 py-1.5 bg-green-100 text-green-700 rounded-lg text-xs font-medium hover:bg-green-200"
+            >
               <RefreshCw size={12} />
               Re-parse
             </button>
@@ -202,7 +365,7 @@ export default function ResumeUpload() {
                   </div>
                   <div className="flex-1">
                     <p className="text-sm font-semibold text-purple-900">AI is automatically searching for jobs...</p>
-                    <p className="text-xs text-purple-600">Using your resume skills to find the best matches across all platforms</p>
+                    <p className="text-xs text-purple-600">Using your resume skills to find the best matches</p>
                   </div>
                   <span className="text-sm font-bold text-purple-600">{searchProgress}%</span>
                 </div>
@@ -216,10 +379,10 @@ export default function ResumeUpload() {
                   {[
                     { label: 'Extracting skills', done: searchProgress > 20 },
                     { label: 'Identifying roles', done: searchProgress > 40 },
-                    { label: 'Scanning LinkedIn', done: searchProgress > 55 },
-                    { label: 'Scanning Indeed', done: searchProgress > 65 },
-                    { label: 'Scanning Glassdoor', done: searchProgress > 75 },
-                    { label: 'Ranking matches', done: searchProgress > 90 },
+                    { label: 'Scanning job boards', done: searchProgress > 60 },
+                    { label: 'Matching positions', done: searchProgress > 75 },
+                    { label: 'Calculating scores', done: searchProgress > 85 },
+                    { label: 'Ranking results', done: searchProgress > 95 },
                   ].map((step, i) => (
                     <div key={i} className={`flex items-center gap-1.5 px-2 py-1.5 rounded-lg text-xs ${
                       step.done ? 'bg-green-100 text-green-700' : 'bg-white/50 text-slate-500'
@@ -233,9 +396,9 @@ export default function ResumeUpload() {
             )}
           </AnimatePresence>
 
-          {/* Search Complete - Auto Found Jobs */}
+          {/* Search Complete - Found Jobs */}
           <AnimatePresence>
-            {searchComplete && (
+            {searchComplete && foundJobs.length > 0 && (
               <motion.div
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
@@ -248,58 +411,67 @@ export default function ResumeUpload() {
                     </div>
                     <div>
                       <h3 className="text-lg font-semibold text-slate-900">Jobs Found From Your Resume</h3>
-                      <p className="text-sm text-slate-500">AI automatically matched 156 positions based on your profile</p>
+                      <p className="text-sm text-slate-500">AI automatically matched {foundJobs.length} positions</p>
                     </div>
                   </div>
                   <span className="px-3 py-1.5 bg-green-100 text-green-700 rounded-full text-xs font-bold">
-                    156 matches
+                    {foundJobs.length} matches
                   </span>
                 </div>
-                <div className="divide-y divide-slate-50">
-                  {autoSearchResults.map((job, i) => (
+                <div className="divide-y divide-slate-50 max-h-96 overflow-y-auto">
+                  {foundJobs.slice(0, 10).map((job, i) => (
                     <motion.div
-                      key={i}
+                      key={job.externalId}
                       initial={{ opacity: 0, x: -20 }}
                       animate={{ opacity: 1, x: 0 }}
-                      transition={{ delay: i * 0.1 }}
+                      transition={{ delay: i * 0.05 }}
                       className="p-4 flex items-center gap-4 hover:bg-slate-50/50 transition-colors"
                     >
                       <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${
-                        job.match >= 95 ? 'bg-green-100' : 'bg-blue-100'
+                        job.matchScore >= 90 ? 'bg-green-100' : 'bg-blue-100'
                       }`}>
-                        <Briefcase size={18} className={job.match >= 95 ? 'text-green-600' : 'text-blue-600'} />
+                        <Briefcase size={18} className={job.matchScore >= 90 ? 'text-green-600' : 'text-blue-600'} />
                       </div>
                       <div className="flex-1 min-w-0">
-                        <p className="text-sm font-semibold text-slate-900">{job.title}</p>
-                        <p className="text-xs text-slate-500">{job.company}</p>
+                        <p className="text-sm font-semibold text-slate-900 truncate">{job.title}</p>
+                        <p className="text-xs text-slate-500 truncate">{job.company}</p>
                         <div className="flex items-center gap-3 mt-1">
                           <span className="flex items-center gap-1 text-xs text-slate-400">
                             <MapPin size={10} /> {job.location}
                           </span>
-                          <span className="flex items-center gap-1 text-xs text-slate-400">
-                            <DollarSign size={10} /> {job.salary}
-                          </span>
+                          {job.salary && (
+                            <span className="flex items-center gap-1 text-xs text-slate-400">
+                              <DollarSign size={10} /> {job.salary}
+                            </span>
+                          )}
                         </div>
                       </div>
                       <div className="flex items-center gap-3">
                         <div className="text-right">
-                          <p className={`text-sm font-bold ${job.match >= 95 ? 'text-green-600' : 'text-blue-600'}`}>
-                            {job.match}%
+                          <p className={`text-sm font-bold ${job.matchScore >= 90 ? 'text-green-600' : 'text-blue-600'}`}>
+                            {job.matchScore}%
                           </p>
                           <p className="text-[10px] text-slate-400">match</p>
                         </div>
-                        <button className="px-3 py-1.5 bg-blue-600 text-white rounded-lg text-xs font-medium hover:bg-blue-700">
-                          Apply
-                        </button>
+                        <a
+                          href={job.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="px-3 py-1.5 bg-blue-600 text-white rounded-lg text-xs font-medium hover:bg-blue-700"
+                        >
+                          View
+                        </a>
                       </div>
                     </motion.div>
                   ))}
                 </div>
-                <div className="p-4 border-t border-slate-100 text-center bg-slate-50">
-                  <button className="text-sm text-blue-600 font-medium hover:text-blue-700">
-                    View all 156 matched jobs in Job Scanner →
-                  </button>
-                </div>
+                {foundJobs.length > 10 && (
+                  <div className="p-4 border-t border-slate-100 text-center bg-slate-50">
+                    <p className="text-sm text-blue-600 font-medium">
+                      + {foundJobs.length - 10} more jobs in Job Scanner
+                    </p>
+                  </div>
+                )}
               </motion.div>
             )}
           </AnimatePresence>
@@ -333,42 +505,46 @@ export default function ResumeUpload() {
             </div>
 
             {/* Experience */}
-            <div className="mb-6">
-              <div className="flex items-center gap-2 mb-3">
-                <Briefcase size={16} className="text-green-600" />
-                <h3 className="text-sm font-semibold text-slate-700">Experience</h3>
+            {resumeData.experience.length > 0 && (
+              <div className="mb-6">
+                <div className="flex items-center gap-2 mb-3">
+                  <Briefcase size={16} className="text-green-600" />
+                  <h3 className="text-sm font-semibold text-slate-700">Experience</h3>
+                </div>
+                <div className="space-y-4">
+                  {resumeData.experience.map((exp, i) => (
+                    <div key={i} className="pl-4 border-l-2 border-slate-200">
+                      <h4 className="font-medium text-slate-900">{exp.title}</h4>
+                      <p className="text-sm text-slate-500">{exp.company} • {exp.duration}</p>
+                      <p className="text-sm text-slate-600 mt-1">{exp.description}</p>
+                    </div>
+                  ))}
+                </div>
               </div>
-              <div className="space-y-4">
-                {resumeData.experience.map((exp, i) => (
-                  <div key={i} className="pl-4 border-l-2 border-slate-200">
-                    <h4 className="font-medium text-slate-900">{exp.title}</h4>
-                    <p className="text-sm text-slate-500">{exp.company} • {exp.duration}</p>
-                    <p className="text-sm text-slate-600 mt-1">{exp.description}</p>
-                  </div>
-                ))}
-              </div>
-            </div>
+            )}
 
             {/* Education */}
-            <div>
-              <div className="flex items-center gap-2 mb-3">
-                <GraduationCap size={16} className="text-purple-600" />
-                <h3 className="text-sm font-semibold text-slate-700">Education</h3>
-              </div>
-              <div className="space-y-2">
-                {resumeData.education.map((edu, i) => (
-                  <div key={i} className="flex items-center gap-3">
-                    <div className="w-8 h-8 bg-purple-50 rounded-lg flex items-center justify-center">
-                      <GraduationCap size={14} className="text-purple-600" />
+            {resumeData.education.length > 0 && (
+              <div>
+                <div className="flex items-center gap-2 mb-3">
+                  <GraduationCap size={16} className="text-purple-600" />
+                  <h3 className="text-sm font-semibold text-slate-700">Education</h3>
+                </div>
+                <div className="space-y-2">
+                  {resumeData.education.map((edu, i) => (
+                    <div key={i} className="flex items-center gap-3">
+                      <div className="w-8 h-8 bg-purple-50 rounded-lg flex items-center justify-center">
+                        <GraduationCap size={14} className="text-purple-600" />
+                      </div>
+                      <div>
+                        <p className="text-sm font-medium text-slate-900">{edu.degree}</p>
+                        <p className="text-xs text-slate-500">{edu.institution} • {edu.year}</p>
+                      </div>
                     </div>
-                    <div>
-                      <p className="text-sm font-medium text-slate-900">{edu.degree}</p>
-                      <p className="text-xs text-slate-500">{edu.institution} • {edu.year}</p>
-                    </div>
-                  </div>
-                ))}
+                  ))}
+                </div>
               </div>
-            </div>
+            )}
           </div>
 
           {/* AI Matching Insights */}
@@ -377,26 +553,21 @@ export default function ResumeUpload() {
               <Sparkles size={18} className="text-blue-600" />
               <h3 className="text-sm font-semibold text-blue-900">AI Matching Insights</h3>
             </div>
-            <p className="text-xs text-blue-700 mb-4">Based on your resume, the AI agent identified these opportunities:</p>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
               <div className="bg-white rounded-xl p-4">
-                <p className="text-2xl font-bold text-blue-600">156</p>
+                <p className="text-2xl font-bold text-blue-600">{foundJobs.length}</p>
                 <p className="text-xs text-slate-500 mt-1">Jobs matching your profile</p>
               </div>
               <div className="bg-white rounded-xl p-4">
-                <p className="text-2xl font-bold text-green-600">24</p>
+                <p className="text-2xl font-bold text-green-600">
+                  {foundJobs.filter(j => j.matchScore >= 90).length}
+                </p>
                 <p className="text-xs text-slate-500 mt-1">High match (90%+)</p>
               </div>
               <div className="bg-white rounded-xl p-4">
-                <p className="text-2xl font-bold text-purple-600">$185K</p>
-                <p className="text-xs text-slate-500 mt-1">Avg. salary for matches</p>
+                <p className="text-2xl font-bold text-purple-600">{resumeData.skills.length}</p>
+                <p className="text-xs text-slate-500 mt-1">Skills identified</p>
               </div>
-            </div>
-            <div className="mt-4 p-3 bg-white/70 rounded-xl">
-              <p className="text-xs text-slate-600">
-                <span className="font-semibold">AI Recommendation:</span> Your strongest matches are Senior Frontend and Full Stack roles at tech companies. 
-                The agent will prioritize these and auto-apply with your approval.
-              </p>
             </div>
           </div>
         </motion.div>
@@ -404,3 +575,5 @@ export default function ResumeUpload() {
     </div>
   );
 }
+
+
