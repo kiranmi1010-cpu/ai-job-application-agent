@@ -35,11 +35,23 @@ export default function ResumeUpload() {
   const [searchProgress, setSearchProgress] = useState(0);
   const [foundJobs, setFoundJobs] = useState<JobListing[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [geminiUsed, setGeminiUsed] = useState(false);
+  const [geminiAvailable, setGeminiAvailable] = useState<boolean | null>(null);
 
   // Load existing resume on mount
   useEffect(() => {
     loadExistingResume();
+    checkGemini();
   }, []);
+
+  const checkGemini = async () => {
+    try {
+      const response = await fetch('/api/gemini', { method: 'OPTIONS' });
+      setGeminiAvailable(response.ok);
+    } catch {
+      setGeminiAvailable(false);
+    }
+  };
 
   const loadExistingResume = async () => {
     try {
@@ -77,6 +89,9 @@ export default function ResumeUpload() {
       const parsed = await parseResumeFile(file);
       setResumeData(parsed);
       setParsed(true);
+      
+      // Check if Gemini was used (Gemini adds a summary field)
+      setGeminiUsed(!!(parsed as any).summary || (parsed.skills?.length > 15));
 
       // Save to database
       await dbHelpers.saveResume({
@@ -341,14 +356,47 @@ export default function ResumeUpload() {
                   : 'AI is now searching for matching jobs.'}
               </p>
             </div>
-            <button 
-              onClick={handleReparse}
-              className="flex items-center gap-1 px-3 py-1.5 bg-green-100 text-green-700 rounded-lg text-xs font-medium hover:bg-green-200"
-            >
-              <RefreshCw size={12} />
-              Re-parse
-            </button>
+            <div className="flex items-center gap-2">
+              {geminiUsed && (
+                <span className="flex items-center gap-1 px-2 py-1 bg-purple-100 text-purple-700 rounded-lg text-xs font-medium">
+                  <Sparkles size={10} />
+                  Gemini AI
+                </span>
+              )}
+              <button 
+                onClick={handleReparse}
+                className="flex items-center gap-1 px-3 py-1.5 bg-green-100 text-green-700 rounded-lg text-xs font-medium hover:bg-green-200"
+              >
+                <RefreshCw size={12} />
+                Re-parse
+              </button>
+            </div>
           </div>
+
+          {/* Gemini Status */}
+          {geminiAvailable !== null && (
+            <div className={`rounded-xl p-3 flex items-center gap-2 ${
+              geminiAvailable 
+                ? 'bg-purple-50 border border-purple-200' 
+                : 'bg-amber-50 border border-amber-200'
+            }`}>
+              {geminiAvailable ? (
+                <>
+                  <div className="w-2 h-2 bg-purple-500 rounded-full animate-pulse" />
+                  <p className="text-xs text-purple-700">
+                    <span className="font-semibold">Google Gemini AI</span> is active — powering resume parsing, job matching, and email generation.
+                  </p>
+                </>
+              ) : (
+                <>
+                  <div className="w-2 h-2 bg-amber-500 rounded-full" />
+                  <p className="text-xs text-amber-700">
+                    <span className="font-semibold">Gemini API not connected.</span> Using local parsing. Deploy to Vercel with GEMINI_API_KEY to enable AI features.
+                  </p>
+                </>
+              )}
+            </div>
+          )}
 
           {/* Auto Search Progress */}
           <AnimatePresence>

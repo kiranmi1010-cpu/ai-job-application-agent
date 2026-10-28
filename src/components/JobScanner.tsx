@@ -318,6 +318,22 @@ export default function JobScanner() {
               </div>
             </div>
 
+            {/* Gemini Match Reasons */}
+            {job.matchReasons && job.matchReasons.length > 0 && (
+              <div className="mt-3 ml-15 pl-4 border-l-2 border-purple-200">
+                <p className="text-[10px] uppercase font-semibold text-purple-600 mb-1 flex items-center gap-1">
+                  <Sparkles size={8} /> Gemini AI Analysis
+                </p>
+                <div className="flex flex-wrap gap-1.5">
+                  {job.matchReasons.slice(0, 3).map((reason, j) => (
+                    <span key={j} className="px-2 py-0.5 bg-purple-50 text-purple-700 border border-purple-200 rounded text-[10px] font-medium">
+                      {reason}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {/* Requirements */}
             {job.requirements && job.requirements.length > 0 && (
               <div className="mt-3 flex flex-wrap gap-2">
