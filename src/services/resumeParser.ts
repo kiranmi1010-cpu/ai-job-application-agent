@@ -2,9 +2,12 @@ import * as pdfjsLib from 'pdfjs-dist';
 import mammoth from 'mammoth';
 import { parseResumeWithGemini, ParsedResumeData } from './gemini';
 
-// Configure PDF.js worker - use fixed CDN version for Vercel compatibility
-// Using a specific version ensures the worker file always exists
-pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js`;
+// Import PDF.js worker as URL for Vite compatibility
+// This is the proper way to handle pdfjs-dist workers in Vite
+import pdfjsWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
+
+// Configure PDF.js worker using the imported URL
+pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorker;
 
 export interface ParsedResume extends ParsedResumeData {
   rawText: string;
