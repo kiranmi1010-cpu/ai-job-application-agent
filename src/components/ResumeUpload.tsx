@@ -154,8 +154,8 @@ export default function ResumeUpload() {
         });
       }, 200);
 
-      // Search for jobs
-      const jobs = await searchJobs(resume, false); // Set to true if you have API key
+      // Search for jobs using real JSearch API
+      const jobs = await searchJobs(resume);
       
       clearInterval(progressInterval);
       setSearchProgress(100);
