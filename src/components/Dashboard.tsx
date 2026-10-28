@@ -19,8 +19,10 @@ import {
   FileText
 } from 'lucide-react';
 import { dbHelpers } from '../db';
+import { useAuth } from '../contexts/AuthContext';
 
 export default function Dashboard() {
+  const { user } = useAuth();
   const [stats, setStats] = useState({
     totalJobs: 0,
     totalApplications: 0,
@@ -61,7 +63,7 @@ export default function Dashboard() {
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
           <h1 className="text-2xl sm:text-3xl font-bold text-slate-900">
-            Welcome back 👋
+            Welcome back, {user?.name || 'User'} 👋
           </h1>
           <p className="text-slate-500 mt-1">
             {hasResume 

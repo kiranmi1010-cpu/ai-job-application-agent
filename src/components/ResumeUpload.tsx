@@ -85,7 +85,24 @@ export default function ResumeUpload() {
     setParsing(true);
 
     try {
-      // Parse the resume
+      // Validate file size
+      if (file.size > 10 * 1024 * 1024) {
+        throw new Error('File size exceeds 10MB limit. Please upload a smaller file.');
+      }
+
+      // Validate file type
+      const validTypes = [
+        'application/pdf',
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        'application/msword',
+        'text/plain'
+      ];
+      
+      if (!validTypes.includes(file.type) && !file.name.match(/\.(pdf|docx|doc|txt)$/i)) {
+        throw new Error('Invalid file type. Please upload a PDF, DOCX, or TXT file.');
+      }
+
+      // Parse the resume (all processing happens in browser)
       const parsed = await parseResumeFile(file);
       setResumeData(parsed);
       setParsed(true);
@@ -93,7 +110,7 @@ export default function ResumeUpload() {
       // Check if Gemini was used (Gemini adds a summary field)
       setGeminiUsed(!!(parsed as any).summary || (parsed.skills?.length > 15));
 
-      // Save to database
+      // Save to IndexedDB (browser storage, not file system)
       await dbHelpers.saveResume({
         fileName: file.name,
         rawText: parsed.rawText,
@@ -113,9 +130,11 @@ export default function ResumeUpload() {
         startAutoSearch(parsed);
       }, 1000);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to parse resume');
+      const errorMessage = err instanceof Error ? err.message : 'Failed to parse resume';
+      setError(errorMessage);
       setUploaded(false);
       setParsing(false);
+      console.error('Resume upload error:', err);
     }
   };
 

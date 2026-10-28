@@ -1,35 +1,152 @@
 import * as pdfjsLib from 'pdfjs-dist';
+import mammoth from 'mammoth';
 import { parseResumeWithGemini, ParsedResumeData } from './gemini';
 
-// Configure PDF.js worker
-pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
+// Configure PDF.js worker - use fixed CDN version for Vercel compatibility
+// Using a specific version ensures the worker file always exists
+pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js`;
 
 export interface ParsedResume extends ParsedResumeData {
   rawText: string;
 }
 
-// Extract text from PDF file
+/**
+ * Extract text from PDF file using pdfjs-dist
+ * All processing happens in the browser - no file system access needed
+ */
 export async function extractTextFromPDF(file: File): Promise<string> {
-  const arrayBuffer = await file.arrayBuffer();
-  const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
-  
-  let fullText = '';
-  for (let i = 1; i <= pdf.numPages; i++) {
-    const page = await pdf.getPage(i);
-    const textContent = await page.getTextContent();
-    const pageText = textContent.items
-      .map((item: any) => item.str)
-      .join(' ');
-    fullText += pageText + '\n';
+  try {
+    const arrayBuffer = await file.arrayBuffer();
+    
+    const loadingTask = pdfjsLib.getDocument({
+      data: new Uint8Array(arrayBuffer),
+      useSystemFonts: true,
+    });
+    
+    const pdf = await loadingTask.promise;
+    let fullText = '';
+    
+    // Extract text from all pages
+    for (let i = 1; i <= pdf.numPages; i++) {
+      const page = await pdf.getPage(i);
+      const textContent = await page.getTextContent();
+      
+      // Join text items, handling both string items and other types
+      const pageText = textContent.items
+        .map((item: any) => {
+          if (item && typeof item === 'object' && 'str' in item) {
+            return item.str;
+          }
+          return '';
+        })
+        .filter(text => text.length > 0)
+        .join(' ');
+      
+      fullText += pageText + '\n\n';
+    }
+    
+    const trimmedText = fullText.trim();
+    
+    if (!trimmedText) {
+      throw new Error('No text could be extracted from the PDF. The file may be image-based or corrupted.');
+    }
+    
+    return trimmedText;
+  } catch (error: any) {
+    console.error('Error extracting text from PDF:', error);
+    if (error.message?.includes('No text could be extracted')) {
+      throw error;
+    }
+    throw new Error(`Failed to extract text from PDF: ${error.message || 'Unknown error'}. Please ensure the file is a valid PDF.`);
   }
-  
-  return fullText;
 }
 
-// Extract text from DOC/DOCX (simplified)
-export async function extractTextFromDoc(file: File): Promise<string> {
-  const text = await file.text();
-  return text;
+/**
+ * Extract text from DOCX file using mammoth
+ * All processing happens in the browser - no file system access needed
+ */
+export async function extractTextFromDocx(file: File): Promise<string> {
+  try {
+    const arrayBuffer = await file.arrayBuffer();
+    const result = await mammoth.extractRawText({ arrayBuffer });
+    
+    if (!result.value || result.value.trim().length === 0) {
+      throw new Error('No text could be extracted from the DOCX file.');
+    }
+    
+    return result.value.trim();
+  } catch (error: any) {
+    console.error('Error extracting text from DOCX:', error);
+    throw new Error(`Failed to extract text from DOCX: ${error.message || 'Unknown error'}. Please ensure the file is a valid Word document.`);
+  }
+}
+
+/**
+ * Extract text from plain text file
+ * All processing happens in the browser - no file system access needed
+ */
+export async function extractTextFromTxt(file: File): Promise<string> {
+  try {
+    const text = await file.text();
+    
+    if (!text || text.trim().length === 0) {
+      throw new Error('The text file is empty.');
+    }
+    
+    return text.trim();
+  } catch (error: any) {
+    console.error('Error reading text file:', error);
+    throw new Error(`Failed to read text file: ${error.message || 'Unknown error'}`);
+  }
+}
+
+/**
+ * Detect file type from File object
+ */
+function detectFileType(file: File): 'pdf' | 'docx' | 'doc' | 'txt' | 'unknown' {
+  const fileName = file.name.toLowerCase();
+  const mimeType = file.type.toLowerCase();
+  
+  if (mimeType === 'application/pdf' || fileName.endsWith('.pdf')) {
+    return 'pdf';
+  }
+  if (mimeType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' || fileName.endsWith('.docx')) {
+    return 'docx';
+  }
+  if (mimeType === 'application/msword' || fileName.endsWith('.doc')) {
+    return 'doc';
+  }
+  if (mimeType === 'text/plain' || fileName.endsWith('.txt')) {
+    return 'txt';
+  }
+  
+  return 'unknown';
+}
+
+/**
+ * Main function: Extract text from any supported file type
+ * All processing happens in the browser - NO file system operations
+ */
+export async function extractTextFromFile(file: File): Promise<string> {
+  const fileType = detectFileType(file);
+  
+  switch (fileType) {
+    case 'pdf':
+      return extractTextFromPDF(file);
+    case 'docx':
+      return extractTextFromDocx(file);
+    case 'txt':
+      return extractTextFromTxt(file);
+    case 'doc':
+      // Legacy .doc format - try mammoth as it sometimes works
+      try {
+        return await extractTextFromDocx(file);
+      } catch {
+        throw new Error('Legacy .doc files are not fully supported. Please save your document as .docx or .pdf format.');
+      }
+    default:
+      throw new Error(`Unsupported file type: ${file.type || file.name}. Please upload a PDF, DOCX, or TXT file.`);
+  }
 }
 
 // Local fallback parser (used when Gemini API is unavailable)
@@ -156,22 +273,22 @@ function extractEducation(text: string): Array<{degree: string; institution: str
   return education.slice(0, 3);
 }
 
-// Main function: Try Gemini first, fallback to local parser
+/**
+ * Main function: Parse a resume file
+ * Flow: File → Extract Text (browser) → Send to Gemini API → Return parsed data
+ * NO file system operations - everything happens in the browser
+ */
 export async function parseResumeFile(file: File): Promise<ParsedResume> {
-  let rawText = '';
+  // Step 1: Extract text from file (all in-browser, no file saving)
+  let rawText: string;
   
-  if (file.type === 'application/pdf') {
-    rawText = await extractTextFromPDF(file);
-  } else if (file.type === 'application/msword' || 
-             file.type === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') {
-    rawText = await extractTextFromDoc(file);
-  } else if (file.type === 'text/plain') {
-    rawText = await file.text();
-  } else {
-    throw new Error('Unsupported file format. Please upload PDF, DOC, DOCX, or TXT files.');
+  try {
+    rawText = await extractTextFromFile(file);
+  } catch (error: any) {
+    throw new Error(error.message || 'Failed to extract text from file');
   }
   
-  // Try Gemini AI parsing first
+  // Step 2: Try Gemini AI parsing first (sends text to API, not file)
   try {
     const geminiResult = await parseResumeWithGemini(rawText);
     
@@ -192,7 +309,7 @@ export async function parseResumeFile(file: File): Promise<ParsedResume> {
     console.warn('Gemini parsing failed, falling back to local parser:', error);
   }
   
-  // Fallback to local parser
+  // Step 3: Fallback to local parser (no API needed)
   const localParsed = parseResumeTextLocal(rawText);
   
   return {

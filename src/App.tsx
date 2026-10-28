@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Menu, Bell, Search } from 'lucide-react';
+import { Menu, Bell, Search, LogOut } from 'lucide-react';
 import Sidebar from './components/Sidebar';
 import Dashboard from './components/Dashboard';
 import JobScanner from './components/JobScanner';
@@ -8,12 +8,20 @@ import Applications from './components/Applications';
 import Approvals from './components/Approvals';
 import ResumeUpload from './components/ResumeUpload';
 import Settings from './components/Settings';
+import LoginPage from './components/LoginPage';
 import { ViewType } from './types';
+import { AuthProvider, useAuth } from './contexts/AuthContext';
 
-function App() {
+function AppContent() {
+  const { user, isAuthenticated, logout } = useAuth();
   const [currentView, setCurrentView] = useState<ViewType>('dashboard');
   const [isMobileOpen, setIsMobileOpen] = useState(false);
   const pendingApprovals = 3;
+
+  // Show login page if not authenticated
+  if (!isAuthenticated) {
+    return <LoginPage />;
+  }
 
   const renderView = () => {
     switch (currentView) {
@@ -25,6 +33,10 @@ function App() {
       case 'settings': return <Settings />;
       default: return <Dashboard />;
     }
+  };
+
+  const getUserInitial = () => {
+    return user?.name?.charAt(0).toUpperCase() || 'U';
   };
 
   return (
@@ -72,12 +84,19 @@ function App() {
             {/* Profile */}
             <div className="flex items-center gap-3 pl-3 border-l border-slate-200">
               <div className="hidden sm:block text-right">
-                <p className="text-sm font-medium text-slate-900">Kiran Prem</p>
+                <p className="text-sm font-medium text-slate-900">{user?.name || 'User'}</p>
                 <p className="text-xs text-slate-500">Pro Plan</p>
               </div>
               <div className="w-9 h-9 bg-gradient-to-br from-blue-500 to-purple-600 rounded-xl flex items-center justify-center text-white text-sm font-bold">
-                K
+                {getUserInitial()}
               </div>
+              <button
+                onClick={logout}
+                className="p-2 text-slate-600 hover:bg-slate-100 rounded-lg transition-colors"
+                title="Logout"
+              >
+                <LogOut size={18} />
+              </button>
             </div>
           </div>
         </header>
@@ -98,6 +117,14 @@ function App() {
         </main>
       </div>
     </div>
+  );
+}
+
+function App() {
+  return (
+    <AuthProvider>
+      <AppContent />
+    </AuthProvider>
   );
 }
 
