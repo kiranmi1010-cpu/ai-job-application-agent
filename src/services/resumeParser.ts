@@ -3,10 +3,9 @@ import mammoth from 'mammoth';
 import { parseResumeWithGemini, ParsedResumeData } from './gemini';
 
 // Import PDF.js worker as URL for Vite compatibility
-// This is the proper way to handle pdfjs-dist workers in Vite
 import pdfjsWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 
-// Configure PDF.js worker using the imported URL
+// Configure PDF.js worker - critical for Vite
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorker;
 
 export interface ParsedResume extends ParsedResumeData {
@@ -21,11 +20,13 @@ export async function extractTextFromPDF(file: File): Promise<string> {
   try {
     const arrayBuffer = await file.arrayBuffer();
     
-    const loadingTask = pdfjsLib.getDocument({
-      data: new Uint8Array(arrayBuffer),
-      useSystemFonts: true,
-    });
+    const pdfOptions: any = {};
+    pdfOptions['data'] = new Uint8Array(arrayBuffer);
+    pdfOptions.workerSrc = pdfjsWorker;
+    pdfOptions.isEvalSupported = false;
+    pdfOptions.useSystemFonts = true;
     
+    const loadingTask = pdfjsLib.getDocument(pdfOptions);
     const pdf = await loadingTask.promise;
     let fullText = '';
     
