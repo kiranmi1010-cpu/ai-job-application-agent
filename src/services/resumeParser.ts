@@ -2,11 +2,8 @@ import * as pdfjsLib from 'pdfjs-dist';
 import mammoth from 'mammoth';
 import { parseResumeWithGemini, ParsedResumeData } from './gemini';
 
-// Import PDF.js worker as URL for Vite compatibility
-import pdfjsWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
-
-// Configure PDF.js worker - critical for Vite
-pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorker;
+// Configure PDF.js worker to use CDN (bypasses Vite bundling issues)
+pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 
 export interface ParsedResume extends ParsedResumeData {
   rawText: string;
@@ -22,7 +19,6 @@ export async function extractTextFromPDF(file: File): Promise<string> {
     
     const pdfOptions: any = {};
     pdfOptions['data'] = new Uint8Array(arrayBuffer);
-    pdfOptions.workerSrc = pdfjsWorker;
     pdfOptions.isEvalSupported = false;
     pdfOptions.useSystemFonts = true;
     
