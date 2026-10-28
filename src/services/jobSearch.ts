@@ -1,6 +1,6 @@
-import axios from 'axios';
 import { ParsedResumeData } from './gemini';
 import { matchJobsWithGemini, JobMatchResult } from './gemini';
+import { searchJobs as jsearchAPI, formatSalary, formatLocation, formatPostedDate, extractSkillsFromDescription, JSearchJob } from './jsearch';
 
 export interface JobListing {
   externalId: string;
@@ -17,13 +17,72 @@ export interface JobListing {
   source: string;
   url: string;
   postedDate: string;
+  logo?: string;
+  isRemote?: boolean;
 }
 
-// JSearch API configuration
-const JSEARCH_API_KEY = process.env.VITE_JSEARCH_API_KEY || '';
-const JSEARCH_BASE_URL = 'https://jsearch-proxy.p.rapidapi.com/v1/search';
+/**
+ * Transform JSearch API job to our JobListing format
+ */
+function transformJSearchJob(job: JSearchJob): JobListing {
+  return {
+    externalId: job.job_id || `job-${Date.now()}-${Math.random()}`,
+    title: job.job_title || 'Unknown Position',
+    company: job.employer_name || 'Unknown Company',
+    location: formatLocation(job.job_city, job.job_state, job.job_country, job.job_is_remote),
+    type: job.job_employment_type || 'Full-time',
+    salary: formatSalary(job.job_min_salary, job.job_max_salary, job.job_currency),
+    description: job.job_description || '',
+    requirements: extractSkillsFromDescription(job.job_description || '', job.job_required_skills),
+    matchScore: 0, // Will be calculated later
+    source: 'JSearch',
+    url: job.job_apply_link || job.job_google_link || '',
+    postedDate: formatPostedDate(job.job_posted_at_timestamp, job.job_posted_at_datetime_utc),
+    logo: job.employer_logo,
+    isRemote: job.job_is_remote,
+  };
+}
 
-// Calculate match score using Gemini AI (primary) with local fallback
+/**
+ * Search jobs using JSearch API with a custom query
+ */
+export async function searchJobsWithQuery(
+  query: string,
+  options: {
+    location?: string;
+    page?: number;
+    numPages?: number;
+    remoteOnly?: boolean;
+    employmentTypes?: string;
+    dateRange?: 'day' | 'week' | 'month' | '24hours';
+  } = {}
+): Promise<JobListing[]> {
+  try {
+    const response = await jsearchAPI({
+      query,
+      location: options.location,
+      page: options.page,
+      numPages: options.numPages,
+      remoteOnly: options.remoteOnly,
+      employmentTypes: options.employmentTypes,
+      dateRange: options.dateRange,
+    });
+
+    if (!response.success || !response.data?.jobs) {
+      console.error('JSearch API error:', response.error);
+      return [];
+    }
+
+    return response.data.jobs.map(transformJSearchJob);
+  } catch (error) {
+    console.error('Error searching jobs:', error);
+    return [];
+  }
+}
+
+/**
+ * Calculate match score using Gemini AI (primary) with local fallback
+ */
 export async function calculateMatchScoreWithGemini(
   resume: ParsedResumeData,
   jobs: any[]
@@ -102,8 +161,8 @@ function calculateMatchScoreLocal(resume: ParsedResumeData, job: any): number {
   maxScore += 20;
 
   // Location match (10% weight)
-  const jobLocation = (job.job_city || job.job_country || job.location || '').toLowerCase();
-  if (jobLocation.includes('remote') || jobLocation === '') {
+  const jobLocation = (job.location || '').toLowerCase();
+  if (jobLocation.includes('remote') || job.isRemote) {
     score += 10;
   }
   maxScore += 10;
@@ -112,7 +171,11 @@ function calculateMatchScoreLocal(resume: ParsedResumeData, job: any): number {
 }
 
 function extractSkillsFromJob(job: any): string[] {
-  const text = `${job.job_title || job.title || ''} ${job.job_description || job.description || ''} ${job.job_required_skills || job.requirements?.join(' ') || ''}`.toLowerCase();
+  if (job.requirements && Array.isArray(job.requirements)) {
+    return job.requirements;
+  }
+  
+  const text = `${job.title || ''} ${job.description || ''}`.toLowerCase();
   
   const commonSkills = [
     'react', 'angular', 'vue', 'javascript', 'typescript', 'node', 'python', 'java',
@@ -154,7 +217,7 @@ function calculateExperienceYears(resume: ParsedResumeData): number {
 function detectJobLevel(title: string): 'entry' | 'junior' | 'mid' | 'senior' {
   const titleLower = title.toLowerCase();
   
-  if (titleLower.includes('senior') || titleLower.includes('lead') || titleLower.includes('staff')) {
+  if (titleLower.includes('senior') || titleLower.includes('lead') || titleLower.includes('staff') || titleLower.includes('principal')) {
     return 'senior';
   }
   if (titleLower.includes('junior') || titleLower.includes('jr')) {
@@ -166,63 +229,18 @@ function detectJobLevel(title: string): 'entry' | 'junior' | 'mid' | 'senior' {
   return 'entry';
 }
 
-// Search jobs using JSearch API
-export async function searchJobsWithAPI(
-  query: string,
-  location: string = '',
-  numPages: number = 1
-): Promise<JobListing[]> {
-  if (!JSEARCH_API_KEY) {
-    console.warn('JSearch API key not configured');
-    return [];
-  }
-
-  try {
-    const response = await axios.get(JSEARCH_BASE_URL, {
-      params: {
-        query: query,
-        location: location,
-        num_pages: numPages,
-        page: '1'
-      },
-      headers: {
-        'X-RapidAPI-Key': JSEARCH_API_KEY,
-        'X-RapidAPI-Host': 'jsearch-proxy.p.rapidapi.com'
-      }
-    });
-    
-    return (response.data.data || []).map((job: any) => ({
-      externalId: job.job_id || `job-${Date.now()}-${Math.random()}`,
-      title: job.job_title || '',
-      company: job.employer_name || '',
-      location: job.job_city || job.job_country || 'Remote',
-      type: job.job_employment_type || 'Full-time',
-      salary: job.job_min_salary ? `$${job.job_min_salary} - $${job.job_max_salary}` : undefined,
-      description: job.job_description || '',
-      requirements: job.job_required_skills || [],
-      matchScore: 0, // Will be calculated later
-      source: 'JSearch API',
-      url: job.job_google_link || job.job_apply_link || '',
-      postedDate: job.job_posted_at_timestamp 
-        ? new Date(job.job_posted_at_timestamp * 1000).toISOString().split('T')[0]
-        : new Date().toISOString().split('T')[0]
-    }));
-  } catch (error) {
-    console.error('Error searching jobs with API:', error);
-    return [];
-  }
-}
-
-// Search jobs based on resume
+/**
+ * Search jobs based on resume - uses real JSearch API
+ */
 export async function searchJobsFromResume(resume: ParsedResumeData): Promise<JobListing[]> {
   const allJobs: JobListing[] = [];
   
   // Create search queries from resume
   const searchQueries = generateSearchQueries(resume);
   
-  // Search for each query
-  for (const query of searchQueries.slice(0, 3)) {
-    const jobs = await searchJobsWithAPI(query);
+  // Search for each query (limit to 2 queries to stay within API limits)
+  for (const query of searchQueries.slice(0, 2)) {
+    const jobs = await searchJobsWithQuery(query, { numPages: 1 });
     allJobs.push(...jobs);
   }
   
@@ -250,7 +268,7 @@ export async function searchJobsFromResume(resume: ParsedResumeData): Promise<Jo
 function generateSearchQueries(resume: ParsedResumeData): string[] {
   const queries: string[] = [];
   
-  // Use top skills
+  // Use top skills with job title keywords
   const topSkills = resume.skills.slice(0, 3);
   topSkills.forEach(skill => {
     queries.push(`${skill} developer`);
@@ -264,7 +282,7 @@ function generateSearchQueries(resume: ParsedResumeData): string[] {
   return [...new Set(queries)];
 }
 
-function removeDuplicateJobs(jobs: any[]): any[] {
+function removeDuplicateJobs(jobs: JobListing[]): JobListing[] {
   const seen = new Set();
   return jobs.filter(job => {
     const key = `${job.title}-${job.company}-${job.location}`;
@@ -276,75 +294,9 @@ function removeDuplicateJobs(jobs: any[]): any[] {
   });
 }
 
-// Generate mock jobs based on resume (fallback when no API)
-export function generateMockJobsFromResume(resume: ParsedResumeData): JobListing[] {
-  const companies = [
-    'Google', 'Meta', 'Amazon', 'Microsoft', 'Apple', 'Netflix', 'Stripe', 'Airbnb',
-    'Uber', 'Lyft', 'Spotify', 'Twitter', 'LinkedIn', 'Salesforce', 'Adobe', 'Oracle'
-  ];
-  
-  const locations = ['Remote', 'San Francisco, CA', 'New York, NY', 'Seattle, WA', 'Austin, TX'];
-  const jobTypes = ['Full-time', 'Contract', 'Part-time'];
-  
-  const jobs: JobListing[] = [];
-  
-  resume.skills.slice(0, 5).forEach((skill, index) => {
-    const numJobs = Math.floor(Math.random() * 3) + 2;
-    
-    for (let i = 0; i < numJobs; i++) {
-      const company = companies[Math.floor(Math.random() * companies.length)];
-      const location = locations[Math.floor(Math.random() * locations.length)];
-      const type = jobTypes[Math.floor(Math.random() * jobTypes.length)];
-      
-      const experienceLevel = calculateExperienceYears(resume) >= 5 ? 'Senior' : 
-                             calculateExperienceYears(resume) >= 3 ? '' : 'Junior';
-      
-      const title = `${experienceLevel} ${skill} ${['Developer', 'Engineer', 'Specialist'][Math.floor(Math.random() * 3)]}`.trim();
-      
-      const salary = `$${Math.floor(Math.random() * 100) + 100}K - $${Math.floor(Math.random() * 100) + 150}K`;
-      
-      jobs.push({
-        externalId: `mock-${Date.now()}-${index}-${i}`,
-        title,
-        company,
-        location,
-        type,
-        salary,
-        description: `We are looking for a talented ${title} to join our team. You will work on cutting-edge projects using ${skill} and other modern technologies.`,
-        requirements: [skill, '3+ years experience', 'Strong communication skills', 'Team player'],
-        matchScore: Math.floor(Math.random() * 30) + 70,
-        source: 'Mock Data',
-        url: `https://example.com/jobs/${index}-${i}`,
-        postedDate: new Date(Date.now() - Math.random() * 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
-      });
-    }
-  });
-  
-  return jobs;
-}
-
-// Main function to search jobs
-export async function searchJobs(resume: ParsedResumeData, useAPI: boolean = false): Promise<JobListing[]> {
-  if (useAPI && JSEARCH_API_KEY) {
-    const apiJobs = await searchJobsFromResume(resume);
-    if (apiJobs.length > 0) {
-      return apiJobs;
-    }
-  }
-  
-  // Fallback to mock data
-  const mockJobs = generateMockJobsFromResume(resume);
-  
-  // Calculate match scores using Gemini
-  const matchMap = await calculateMatchScoreWithGemini(resume, mockJobs);
-  
-  return mockJobs.map(job => {
-    const match = matchMap.get(job.externalId);
-    return {
-      ...job,
-      matchScore: match?.matchScore || job.matchScore,
-      matchReasons: match?.reasons,
-      recommendation: match?.recommendation
-    };
-  }).sort((a, b) => b.matchScore - a.matchScore);
+/**
+ * Main function to search jobs - always uses real JSearch API
+ */
+export async function searchJobs(resume: ParsedResumeData): Promise<JobListing[]> {
+  return searchJobsFromResume(resume);
 }
