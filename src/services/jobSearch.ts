@@ -1,5 +1,6 @@
 import axios from 'axios';
-import { ParsedResume } from './resumeParser';
+import { ParsedResumeData } from './gemini';
+import { matchJobsWithGemini, JobMatchResult } from './gemini';
 
 export interface JobListing {
   externalId: string;
@@ -11,17 +12,55 @@ export interface JobListing {
   description: string;
   requirements: string[];
   matchScore: number;
+  matchReasons?: string[];
+  recommendation?: 'strong_apply' | 'consider' | 'skip';
   source: string;
   url: string;
   postedDate: string;
 }
 
-// JSearch API configuration (free tier: 500 requests/month)
-const JSEARCH_API_KEY = 'YOUR_RAPIDAPI_KEY'; // User needs to add their own key
+// JSearch API configuration
+const JSEARCH_API_KEY = process.env.VITE_JSEARCH_API_KEY || '';
 const JSEARCH_BASE_URL = 'https://jsearch-proxy.p.rapidapi.com/v1/search';
 
-// Calculate match score between resume and job
-export function calculateMatchScore(resume: ParsedResume, job: any): number {
+// Calculate match score using Gemini AI (primary) with local fallback
+export async function calculateMatchScoreWithGemini(
+  resume: ParsedResumeData,
+  jobs: any[]
+): Promise<Map<string, JobMatchResult>> {
+  const matchMap = new Map<string, JobMatchResult>();
+  
+  // Try Gemini first (batch all jobs)
+  try {
+    const result = await matchJobsWithGemini(resume, jobs);
+    
+    if (result.success && result.data) {
+      result.data.forEach(match => {
+        matchMap.set(match.jobId, match);
+      });
+      return matchMap;
+    }
+  } catch (error) {
+    console.warn('Gemini job matching failed, using local fallback:', error);
+  }
+  
+  // Fallback to local matching
+  jobs.forEach(job => {
+    const localScore = calculateMatchScoreLocal(resume, job);
+    matchMap.set(job.externalId || job.id, {
+      jobId: job.externalId || job.id,
+      matchScore: localScore,
+      reasons: ['Matched based on skills and experience'],
+      missingSkills: [],
+      recommendation: localScore >= 85 ? 'strong_apply' : localScore >= 70 ? 'consider' : 'skip'
+    });
+  });
+  
+  return matchMap;
+}
+
+// Local fallback match score calculator
+function calculateMatchScoreLocal(resume: ParsedResumeData, job: any): number {
   let score = 0;
   let maxScore = 0;
 
@@ -63,7 +102,7 @@ export function calculateMatchScore(resume: ParsedResume, job: any): number {
   maxScore += 20;
 
   // Location match (10% weight)
-  const jobLocation = (job.job_city || job.job_country || '').toLowerCase();
+  const jobLocation = (job.job_city || job.job_country || job.location || '').toLowerCase();
   if (jobLocation.includes('remote') || jobLocation === '') {
     score += 10;
   }
@@ -73,7 +112,7 @@ export function calculateMatchScore(resume: ParsedResume, job: any): number {
 }
 
 function extractSkillsFromJob(job: any): string[] {
-  const text = `${job.job_title || ''} ${job.job_description || ''} ${job.job_required_skills || ''}`.toLowerCase();
+  const text = `${job.job_title || job.title || ''} ${job.job_description || job.description || ''} ${job.job_required_skills || job.requirements?.join(' ') || ''}`.toLowerCase();
   
   const commonSkills = [
     'react', 'angular', 'vue', 'javascript', 'typescript', 'node', 'python', 'java',
@@ -84,7 +123,7 @@ function extractSkillsFromJob(job: any): string[] {
   return commonSkills.filter(skill => text.includes(skill));
 }
 
-function extractKeywordsFromExperience(resume: ParsedResume): string[] {
+function extractKeywordsFromExperience(resume: ParsedResumeData): string[] {
   const keywords: string[] = [];
   
   resume.experience.forEach(exp => {
@@ -95,7 +134,7 @@ function extractKeywordsFromExperience(resume: ParsedResume): string[] {
   return [...new Set(keywords)].slice(0, 5);
 }
 
-function calculateExperienceYears(resume: ParsedResume): number {
+function calculateExperienceYears(resume: ParsedResumeData): number {
   let totalYears = 0;
   
   resume.experience.forEach(exp => {
@@ -133,6 +172,11 @@ export async function searchJobsWithAPI(
   location: string = '',
   numPages: number = 1
 ): Promise<JobListing[]> {
+  if (!JSEARCH_API_KEY) {
+    console.warn('JSearch API key not configured');
+    return [];
+  }
+
   try {
     const response = await axios.get(JSEARCH_BASE_URL, {
       params: {
@@ -147,7 +191,22 @@ export async function searchJobsWithAPI(
       }
     });
     
-    return response.data.data || [];
+    return (response.data.data || []).map((job: any) => ({
+      externalId: job.job_id || `job-${Date.now()}-${Math.random()}`,
+      title: job.job_title || '',
+      company: job.employer_name || '',
+      location: job.job_city || job.job_country || 'Remote',
+      type: job.job_employment_type || 'Full-time',
+      salary: job.job_min_salary ? `$${job.job_min_salary} - $${job.job_max_salary}` : undefined,
+      description: job.job_description || '',
+      requirements: job.job_required_skills || [],
+      matchScore: 0, // Will be calculated later
+      source: 'JSearch API',
+      url: job.job_google_link || job.job_apply_link || '',
+      postedDate: job.job_posted_at_timestamp 
+        ? new Date(job.job_posted_at_timestamp * 1000).toISOString().split('T')[0]
+        : new Date().toISOString().split('T')[0]
+    }));
   } catch (error) {
     console.error('Error searching jobs with API:', error);
     return [];
@@ -155,14 +214,14 @@ export async function searchJobsWithAPI(
 }
 
 // Search jobs based on resume
-export async function searchJobsFromResume(resume: ParsedResume): Promise<JobListing[]> {
+export async function searchJobsFromResume(resume: ParsedResumeData): Promise<JobListing[]> {
   const allJobs: JobListing[] = [];
   
   // Create search queries from resume
   const searchQueries = generateSearchQueries(resume);
   
   // Search for each query
-  for (const query of searchQueries.slice(0, 3)) { // Limit to 3 queries
+  for (const query of searchQueries.slice(0, 3)) {
     const jobs = await searchJobsWithAPI(query);
     allJobs.push(...jobs);
   }
@@ -170,17 +229,25 @@ export async function searchJobsFromResume(resume: ParsedResume): Promise<JobLis
   // Remove duplicates
   const uniqueJobs = removeDuplicateJobs(allJobs);
   
-  // Calculate match scores
-  const jobsWithScores = uniqueJobs.map(job => ({
-    ...job,
-    matchScore: calculateMatchScore(resume, job)
-  }));
+  // Calculate match scores using Gemini
+  const matchMap = await calculateMatchScoreWithGemini(resume, uniqueJobs);
+  
+  // Apply match scores
+  const jobsWithScores = uniqueJobs.map(job => {
+    const match = matchMap.get(job.externalId);
+    return {
+      ...job,
+      matchScore: match?.matchScore || 0,
+      matchReasons: match?.reasons,
+      recommendation: match?.recommendation
+    };
+  });
   
   // Sort by match score
   return jobsWithScores.sort((a, b) => b.matchScore - a.matchScore);
 }
 
-function generateSearchQueries(resume: ParsedResume): string[] {
+function generateSearchQueries(resume: ParsedResumeData): string[] {
   const queries: string[] = [];
   
   // Use top skills
@@ -200,7 +267,7 @@ function generateSearchQueries(resume: ParsedResume): string[] {
 function removeDuplicateJobs(jobs: any[]): any[] {
   const seen = new Set();
   return jobs.filter(job => {
-    const key = `${job.job_title}-${job.employer_name}-${job.job_city}`;
+    const key = `${job.title}-${job.company}-${job.location}`;
     if (seen.has(key)) {
       return false;
     }
@@ -209,8 +276,8 @@ function removeDuplicateJobs(jobs: any[]): any[] {
   });
 }
 
-// Fallback: Generate mock jobs based on resume (for demo purposes)
-export function generateMockJobsFromResume(resume: ParsedResume): JobListing[] {
+// Generate mock jobs based on resume (fallback when no API)
+export function generateMockJobsFromResume(resume: ParsedResumeData): JobListing[] {
   const companies = [
     'Google', 'Meta', 'Amazon', 'Microsoft', 'Apple', 'Netflix', 'Stripe', 'Airbnb',
     'Uber', 'Lyft', 'Spotify', 'Twitter', 'LinkedIn', 'Salesforce', 'Adobe', 'Oracle'
@@ -221,9 +288,8 @@ export function generateMockJobsFromResume(resume: ParsedResume): JobListing[] {
   
   const jobs: JobListing[] = [];
   
-  // Generate jobs based on resume skills and experience
   resume.skills.slice(0, 5).forEach((skill, index) => {
-    const numJobs = Math.floor(Math.random() * 3) + 2; // 2-4 jobs per skill
+    const numJobs = Math.floor(Math.random() * 3) + 2;
     
     for (let i = 0; i < numJobs; i++) {
       const company = companies[Math.floor(Math.random() * companies.length)];
@@ -246,7 +312,7 @@ export function generateMockJobsFromResume(resume: ParsedResume): JobListing[] {
         salary,
         description: `We are looking for a talented ${title} to join our team. You will work on cutting-edge projects using ${skill} and other modern technologies.`,
         requirements: [skill, '3+ years experience', 'Strong communication skills', 'Team player'],
-        matchScore: Math.floor(Math.random() * 30) + 70, // 70-100%
+        matchScore: Math.floor(Math.random() * 30) + 70,
         source: 'Mock Data',
         url: `https://example.com/jobs/${index}-${i}`,
         postedDate: new Date(Date.now() - Math.random() * 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
@@ -258,8 +324,8 @@ export function generateMockJobsFromResume(resume: ParsedResume): JobListing[] {
 }
 
 // Main function to search jobs
-export async function searchJobs(resume: ParsedResume, useAPI: boolean = false): Promise<JobListing[]> {
-  if (useAPI && JSEARCH_API_KEY !== 'YOUR_RAPIDAPI_KEY') {
+export async function searchJobs(resume: ParsedResumeData, useAPI: boolean = false): Promise<JobListing[]> {
+  if (useAPI && JSEARCH_API_KEY) {
     const apiJobs = await searchJobsFromResume(resume);
     if (apiJobs.length > 0) {
       return apiJobs;
@@ -267,5 +333,18 @@ export async function searchJobs(resume: ParsedResume, useAPI: boolean = false):
   }
   
   // Fallback to mock data
-  return generateMockJobsFromResume(resume);
+  const mockJobs = generateMockJobsFromResume(resume);
+  
+  // Calculate match scores using Gemini
+  const matchMap = await calculateMatchScoreWithGemini(resume, mockJobs);
+  
+  return mockJobs.map(job => {
+    const match = matchMap.get(job.externalId);
+    return {
+      ...job,
+      matchScore: match?.matchScore || job.matchScore,
+      matchReasons: match?.reasons,
+      recommendation: match?.recommendation
+    };
+  }).sort((a, b) => b.matchScore - a.matchScore);
 }

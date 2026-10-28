@@ -9,15 +9,17 @@ export interface Resume {
 }
 
 export interface Job {
-  id: string;
+  id: string | number;
   title: string;
   company: string;
   location: string;
-  type: 'Full-time' | 'Part-time' | 'Contract' | 'Remote';
+  type: 'Full-time' | 'Part-time' | 'Contract' | 'Remote' | string;
   salary?: string;
   description: string;
   requirements: string[];
   matchScore: number;
+  matchReasons?: string[];
+  recommendation?: 'strong_apply' | 'consider' | 'skip';
   source: string;
   url: string;
   postedDate: string;

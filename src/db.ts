@@ -35,6 +35,8 @@ export interface Job {
   description: string;
   requirements: string[];
   matchScore: number;
+  matchReasons?: string[];
+  recommendation?: 'strong_apply' | 'consider' | 'skip';
   source: string;
   url: string;
   postedDate: string;
