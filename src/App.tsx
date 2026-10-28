@@ -72,11 +72,11 @@ function App() {
             {/* Profile */}
             <div className="flex items-center gap-3 pl-3 border-l border-slate-200">
               <div className="hidden sm:block text-right">
-                <p className="text-sm font-medium text-slate-900">Alex Johnson</p>
+                <p className="text-sm font-medium text-slate-900">Kiran Prem</p>
                 <p className="text-xs text-slate-500">Pro Plan</p>
               </div>
               <div className="w-9 h-9 bg-gradient-to-br from-blue-500 to-purple-600 rounded-xl flex items-center justify-center text-white text-sm font-bold">
-                A
+                K
               </div>
             </div>
           </div>
