@@ -19,15 +19,18 @@ import {
 } from 'lucide-react';
 import { dbHelpers } from '../db';
 import { Job } from '../types';
+import { searchJobsWithQuery } from '../services/jobSearch';
 
 export default function JobScanner() {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [filterType, setFilterType] = useState<string>('all');
   const [loading, setLoading] = useState(true);
+  const [searching, setSearching] = useState(false);
   const [selectedJob, setSelectedJob] = useState<Job | null>(null);
   const [activeTab, setActiveTab] = useState<'ai-matched' | 'all-jobs'>('ai-matched');
   const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     loadJobs();
@@ -35,19 +38,66 @@ export default function JobScanner() {
 
   const loadJobs = async () => {
     try {
+      setError(null);
       const dbJobs = await dbHelpers.getJobs();
       setJobs(dbJobs as any);
     } catch (error) {
       console.error('Error loading jobs:', error);
+      setError('Failed to load jobs from database');
     } finally {
       setLoading(false);
     }
   };
 
+  const handleSearch = async () => {
+    if (!searchQuery.trim()) {
+      setError('Please enter a search query');
+      return;
+    }
+
+    setSearching(true);
+    setError(null);
+
+    try {
+      // Fetch real jobs from JSearch API
+      const apiJobs = await searchJobsWithQuery(searchQuery, {
+        numPages: 1,
+      });
+
+      if (apiJobs.length === 0) {
+        setError('No jobs found for your search query. Try different keywords.');
+        setSearching(false);
+        return;
+      }
+
+      // Save jobs to database
+      await dbHelpers.clearJobs();
+      await dbHelpers.saveJobs(apiJobs.map(job => ({
+        ...job,
+        status: 'pending' as const,
+        foundAt: new Date()
+      })));
+
+      // Reload jobs from database
+      await loadJobs();
+      setSearching(false);
+    } catch (error) {
+      console.error('Error searching jobs:', error);
+      setError('Failed to search jobs. Please check your API configuration and try again.');
+      setSearching(false);
+    }
+  };
+
   const handleRefresh = async () => {
     setRefreshing(true);
-    await loadJobs();
-    setTimeout(() => setRefreshing(false), 1000);
+    setError(null);
+    try {
+      await loadJobs();
+    } catch (error) {
+      setError('Failed to refresh jobs');
+    } finally {
+      setTimeout(() => setRefreshing(false), 1000);
+    }
   };
 
   const handleApprove = async (jobId: number) => {
@@ -190,18 +240,52 @@ export default function JobScanner() {
         </button>
       </div>
 
+      {/* Error Message */}
+      {error && (
+        <motion.div
+          initial={{ opacity: 0, y: -10 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="bg-red-50 border border-red-200 rounded-xl p-4 flex items-center gap-3"
+        >
+          <AlertCircle size={20} className="text-red-600 flex-shrink-0" />
+          <p className="text-sm text-red-700 flex-1">{error}</p>
+          <button onClick={() => setError(null)} className="text-red-600 hover:text-red-700">
+            <XCircle size={16} />
+          </button>
+        </motion.div>
+      )}
+
       {/* Search & Filters */}
       <div className="flex flex-col sm:flex-row gap-3">
         <div className="flex-1 relative">
           <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
           <input
             type="text"
-            placeholder="Search jobs by title or company..."
+            placeholder="Search jobs (e.g., 'React Developer', 'Data Scientist')..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full pl-10 pr-4 py-2.5 bg-white border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
+            onKeyPress={(e) => e.key === 'Enter' && handleSearch()}
+            disabled={searching}
+            className="w-full pl-10 pr-4 py-2.5 bg-white border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 disabled:opacity-50"
           />
         </div>
+        <button
+          onClick={handleSearch}
+          disabled={searching || !searchQuery.trim()}
+          className="px-6 py-2.5 bg-gradient-to-r from-blue-600 to-purple-600 text-white rounded-xl font-medium text-sm hover:opacity-90 transition-opacity disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+        >
+          {searching ? (
+            <>
+              <Loader2 size={16} className="animate-spin" />
+              Searching...
+            </>
+          ) : (
+            <>
+              <Search size={16} />
+              Search Jobs
+            </>
+          )}
+        </button>
         <div className="flex gap-2">
           {['all', 'Full-time', 'Remote', 'Contract'].map((type) => (
             <button
