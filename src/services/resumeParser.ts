@@ -251,9 +251,9 @@ function extractEducation(text: string): Array<{degree: string; institution: str
     const eduText = eduSectionMatch[1];
     
     const degreePatterns = [
-      /(B\.?S\.?|B\.?A\.?|Bachelor).*?(?:in|of)\s+([^\n]+)/i,
-      /(M\.?S\.?|M\.?A\.?|Master).*?(?:in|of)\s+([^\n]+)/i,
-      /(Ph\.?D|Doctorate).*?(?:in|of)\s+([^\n]+)/i
+      /(B\.?S\.?|B\.?A\.?|Bachelor).*?(?:in|of)\s+([^\n]+)/gi,
+      /(M\.?S\.?|M\.?A\.?|Master).*?(?:in|of)\s+([^\n]+)/gi,
+      /(Ph\.?D|Doctorate).*?(?:in|of)\s+([^\n]+)/gi
     ];
     
     degreePatterns.forEach(pattern => {
