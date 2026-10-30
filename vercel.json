@@ -5,6 +5,9 @@
   "functions": {
     "api/gemini.ts": {
       "maxDuration": 30
+    },
+    "api/jsearch.ts": {
+      "maxDuration": 30
     }
   },
   "rewrites": [
