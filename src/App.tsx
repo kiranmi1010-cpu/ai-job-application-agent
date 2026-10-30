@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Menu, Bell, Search, LogOut } from 'lucide-react';
 import Sidebar from './components/Sidebar';
@@ -17,6 +17,23 @@ function AppContent() {
   const [currentView, setCurrentView] = useState<ViewType>('dashboard');
   const [isMobileOpen, setIsMobileOpen] = useState(false);
   const pendingApprovals = 3;
+
+  // The Dashboard/JobScanner buttons navigate by setting window.location.hash
+  // ('#resume', '#jobs', ...), but the view lives in React state - nothing was
+  // listening, so the URL changed while the screen stayed on the Dashboard.
+  // Sync hash -> view so those buttons (and deep links) actually work.
+  useEffect(() => {
+    const applyHash = () => {
+      const hash = window.location.hash.replace('#', '');
+      const views: ViewType[] = ['dashboard', 'jobs', 'applications', 'approvals', 'resume', 'settings'];
+      if ((views as string[]).includes(hash)) {
+        setCurrentView(hash as ViewType);
+      }
+    };
+    applyHash();
+    window.addEventListener('hashchange', applyHash);
+    return () => window.removeEventListener('hashchange', applyHash);
+  }, []);
 
   // Show login page if not authenticated
   if (!isAuthenticated) {
