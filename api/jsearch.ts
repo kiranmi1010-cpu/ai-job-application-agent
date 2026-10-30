@@ -107,12 +107,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(response.status).json({ 
         error: 'JSearch API request failed',
         status: response.status,
+        // Surface which host we actually hit: a 404 "Endpoint does not exist"
+        // means RAPIDAPI_HOST is wrong (the real path /search exists - it
+        // returns 403 "not subscribed"), so this value is the thing to check.
+        host: RAPIDAPI_HOST,
         message: errorText
       });
     }
 
     // Parse response
-    const data = await response.json();
+    const data: any = await response.json();
 
     // Transform and return data
     return res.status(200).json({

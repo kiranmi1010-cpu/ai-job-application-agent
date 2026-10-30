@@ -2,8 +2,13 @@ import * as pdfjsLib from 'pdfjs-dist';
 import mammoth from 'mammoth';
 import { parseResumeWithGemini, ParsedResumeData } from './gemini';
 
-// Configure PDF.js worker to use CDN (bypasses Vite bundling issues)
-pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+// Bundle the worker that MATCHES the installed pdfjs-dist version (6.4.299).
+// A CDN worker pinned to another major version (e.g. 3.11.174) cannot
+// handshake with the v6 library and the upload dies with
+// "Setting up fake worker failed" - versions must travel together.
+import pdfjsWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
+
+pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorker;
 
 export interface ParsedResume extends ParsedResumeData {
   rawText: string;

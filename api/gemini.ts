@@ -4,6 +4,12 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
 // Initialize Gemini client
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || '');
 
+// Google retires models on short notice (2.0-flash is already gone and every
+// action was 404ing). GEMINI_MODEL lets us swap on Vercel without a redeploy;
+// flash-lite is the current free-tier workhorse and answers in ~1.5s, which
+// matters inside a 30s function timeout.
+const MODEL = process.env.GEMINI_MODEL || 'gemini-flash-lite-latest';
+
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   // CORS headers
   res.setHeader('Access-Control-Allow-Credentials', 'true');
@@ -72,7 +78,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
 // Parse resume text using Gemini
 async function parseResume(text: string) {
-  const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
+  const model = genAI.getGenerativeModel({ model: MODEL });
 
   const prompt = `You are an expert resume parser. Analyze the following resume text and extract structured information. Return ONLY valid JSON with this exact structure:
 
@@ -125,7 +131,7 @@ ${text}`;
 
 // Match resume to jobs using Gemini
 async function matchJobs(resume: any, jobs: any[]) {
-  const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
+  const model = genAI.getGenerativeModel({ model: MODEL });
 
   const prompt = `You are an expert career advisor and job matching AI. Given a candidate's resume and a list of job openings, calculate a match score (0-100) for each job based on:
 - Skills alignment (40%)
@@ -170,7 +176,7 @@ Return ONLY the JSON array, no markdown or explanations.`;
 
 // Generate cover letter using Gemini
 async function generateCoverLetter(resume: any, job: any) {
-  const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
+  const model = genAI.getGenerativeModel({ model: MODEL });
 
   const prompt = `You are a professional career coach and expert at writing compelling job application emails. Write a personalized, professional cover letter email for the following application.
 
@@ -221,7 +227,7 @@ No markdown, no explanations, just the JSON.`;
 
 // Generate follow-up email
 async function generateFollowUp(resume: any, job: any, daysSinceApplication: number = 7) {
-  const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
+  const model = genAI.getGenerativeModel({ model: MODEL });
 
   const prompt = `Write a professional follow-up email for a job application.
 
@@ -255,7 +261,7 @@ Return ONLY valid JSON:
 
 // Generate thank you email
 async function generateThankYou(resume: any, job: any, interviewerName?: string) {
-  const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
+  const model = genAI.getGenerativeModel({ model: MODEL });
 
   const prompt = `Write a professional thank you email after a job interview.
 
@@ -289,7 +295,7 @@ Return ONLY valid JSON:
 
 // Analyze job fit
 async function analyzeJobFit(resume: any, job: any) {
-  const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
+  const model = genAI.getGenerativeModel({ model: MODEL });
 
   const prompt = `You are an expert career advisor. Analyze how well this candidate fits this job and provide actionable insights.
 
