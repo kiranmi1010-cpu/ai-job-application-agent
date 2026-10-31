@@ -106,7 +106,7 @@ async function parseResume(text: string) {
 }
 
 Rules:
-- Extract ALL technical skills mentioned (programming languages, frameworks, tools, databases, cloud services, etc.)
+- Extract the skills, tools and domain competencies the candidate actually has, in their own field and wording. Any field counts: accounting (Tally, GST, TDS, reconciliation), sales (B2B, lead generation, CRM), HR (recruitment, onboarding), healthcare (patient care), teaching (lesson planning), operations, design, engineering, and software too. Never convert a non-technical resume into programming skills it does not contain.
 - If a field cannot be found, use empty string for strings or empty array for arrays
 - Keep skills as individual items (not combined phrases)
 - Experience should be ordered from most recent to oldest

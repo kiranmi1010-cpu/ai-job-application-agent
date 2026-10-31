@@ -137,7 +137,7 @@ export default function JobScanner() {
       : roles.length > 0
         ? roles.slice(0, 2)
         : parsedResume
-          ? generateSearchQueries(parsedResume).slice(0, 2)
+          ? generateSearchQueries(parsedResume).slice(0, 3)
           : [];
 
     if (queries.length === 0) {
@@ -281,7 +281,21 @@ export default function JobScanner() {
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
           <h1 className="text-2xl sm:text-3xl font-bold text-slate-900">Job Scanner</h1>
-          <p className="text-slate-500 mt-1">{targetRoles.trim() ? 'Searching for ' + targetRoles + ' - every job is scored against your resume' : 'Set your target roles below, or let your resume decide what to search for'}</p>
+          <p className="text-slate-500 mt-1">{targetRoles.trim() ? 'Searching for ' + targetRoles + ' - every job is scored against your resume' : 'Searching the roles found in your resume - no target roles needed'}</p>
+          {resume?.parsedData ? (
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <span className="text-xs uppercase tracking-wide text-cyan-300/70">From your resume</span>
+              {(resume.parsedData.experience || []).map((exp: any) => exp?.title).filter(Boolean).slice(0, 3).map((title: string) => (
+                <span key={title} className="px-2 py-0.5 text-xs rounded-full bg-cyan-500/10 text-cyan-200 border border-cyan-500/30">{title}</span>
+              ))}
+              {(resume.parsedData.skills || []).slice(0, 8).map((skill: string) => (
+                <span key={skill} className="px-2 py-0.5 text-xs rounded-full bg-slate-700/60 text-slate-300">{skill}</span>
+              ))}
+              {(!resume.parsedData.experience?.length && !resume.parsedData.skills?.length) ? (
+                <span className="text-xs text-amber-300">No titles or skills detected - re-upload your resume</span>
+              ) : null}
+            </div>
+          ) : null}
         </div>
         <button
           onClick={handleRefresh}
@@ -375,7 +389,7 @@ export default function JobScanner() {
             value={targetRoles}
             onChange={(e) => setTargetRoles(e.target.value)}
             onBlur={() => persistTargets(targetRoles, locationPref)}
-            placeholder="Target roles, e.g. 'Accounts Manager, Sales Executive'"
+            placeholder="Optional override - e.g. Accounts Manager, Sales Executive"
             className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
           />
           <input

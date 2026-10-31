@@ -282,7 +282,7 @@ export async function searchJobsFromResume(resume: ParsedResumeData, targets?: S
   const searchQueries = generateSearchQueries(resume, targets);
   
   // Search for each query (limit to 2 queries to stay within API limits)
-  for (const query of searchQueries.slice(0, 2)) {
+  for (const query of searchQueries.slice(0, 3)) {
     const jobs = await searchJobsWithQuery(query, { numPages: 1, location: targets?.location || undefined });
     allJobs.push(...jobs);
   }
@@ -304,8 +304,12 @@ export async function searchJobsFromResume(resume: ParsedResumeData, targets?: S
     };
   });
   
-  // Sort by match score
-  return jobsWithScores.sort((a, b) => b.matchScore - a.matchScore);
+  // Sort by fit, then keep only what actually relates to this resume: if at
+  // least three roles score above the relevance floor, the weak ones are noise.
+  const sorted = jobsWithScores.sort((a, b) => b.matchScore - a.matchScore);
+  const relevant = sorted.filter((job) => job.matchScore >= 35);
+  const keep = relevant.length >= 3 ? relevant : sorted;
+  return keep.slice(0, 25);
 }
 
 export function generateSearchQueries(resume: ParsedResumeData, targets?: SearchTargets): string[] {
@@ -321,10 +325,21 @@ export function generateSearchQueries(resume: ParsedResumeData, targets?: Search
     });
   }
 
+  // The same role without its seniority word: "Sr. Accounts Manager" is also
+  // advertised as "Accounts Manager".
+  const baseTitles = queries
+    .map((title) => title.replace(/^(senior|sr\.?|junior|jr\.?|lead|principal|associate|assistant)\s+/i, '').trim())
+    .filter((title) => title.split(' ').length > 1);
+  queries.push(...baseTitles);
+
   // Bare skills, with no job family appended: "Tally" is as valid a search in
-  // accounting as "React" is in engineering.
-  (resume.skills || []).slice(0, 4).forEach((skill) => {
-    if (skill?.trim()) queries.push(skill.trim());
+  // accounting as "React" is in engineering. A skill already covered by a
+  // title query is skipped so the three query slots are not wasted.
+  (resume.skills || []).slice(0, 6).forEach((skill) => {
+    const clean = String(skill || '').trim();
+    if (!clean) return;
+    const covered = queries.some((query) => query.toLowerCase().includes(clean.toLowerCase()));
+    if (!covered) queries.push(clean);
   });
 
   const cleaned = queries.map((query) => query.replace(/\s+/g, ' ').trim()).filter(Boolean);

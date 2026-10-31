@@ -193,57 +193,167 @@ function extractPhone(text: string): string {
   return match ? match[0] : '';
 }
 
-function extractSkills(text: string): string[] {
-  const skillsSet = new Set<string>();
-  
-  const technicalSkills = [
-    'JavaScript', 'TypeScript', 'React', 'Angular', 'Vue', 'Node.js', 'Python', 'Java', 
-    'C++', 'C#', 'Go', 'Rust', 'Ruby', 'PHP', 'Swift', 'Kotlin', 'HTML', 'CSS', 'SASS',
-    'SQL', 'PostgreSQL', 'MySQL', 'MongoDB', 'Redis', 'DynamoDB', 'AWS', 'Azure', 'GCP',
-    'Docker', 'Kubernetes', 'Jenkins', 'Git', 'CI/CD', 'REST', 'GraphQL', 'gRPC',
-    'Machine Learning', 'Deep Learning', 'TensorFlow', 'PyTorch', 'Data Science',
-    'React Native', 'Flutter', 'iOS', 'Android', 'Linux', 'Unix', 'Bash', 'PowerShell',
-    'Agile', 'Scrum', 'JIRA', 'TDD', 'BDD', 'Microservices', 'Serverless',
-    'Webpack', 'Vite', 'Next.js', 'Express', 'Django', 'Flask', 'Spring',
-    'Redux', 'MobX', 'Context API', 'Hooks', 'Testing', 'Jest', 'Mocha', 'Cypress'
-  ];
-  
-  const textLower = text.toLowerCase();
-  
-  technicalSkills.forEach(skill => {
-    if (textLower.includes(skill.toLowerCase())) {
-      skillsSet.add(skill);
-    }
-  });
-  
-  return Array.from(skillsSet).slice(0, 20);
+function escapeRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
+
+// Field-neutral on purpose: an accounting, sales or teaching resume has to yield
+// just as many usable skills as a software one, because the search and the
+// match score are both built from this list.
+const SKILL_VOCABULARY: string[] = [
+  // office / general
+  'Microsoft Excel', 'Advanced Excel', 'MS Excel', 'Microsoft Office', 'MS Office',
+  'PowerPoint', 'Google Sheets', 'Data Entry', 'Reporting', 'Documentation',
+  'Communication', 'Leadership', 'Team Management', 'Problem Solving',
+  'Time Management', 'Negotiation', 'Presentation', 'Customer Service',
+  'Multitasking', 'Analytical Skills',
+  // accounting / finance
+  'Tally', 'Tally ERP', 'SAP', 'QuickBooks', 'Zoho Books', 'GST', 'GST Filing',
+  'GST Returns', 'TDS', 'Income Tax', 'Taxation', 'Bookkeeping', 'Accounts Payable',
+  'Accounts Receivable', 'Bank Reconciliation', 'Reconciliation', 'Payroll',
+  'Financial Reporting', 'Financial Analysis', 'Auditing', 'Budgeting',
+  'Forecasting', 'VAT', 'Invoice Processing', 'Billing', 'Cost Accounting',
+  'General Ledger', 'MIS Reporting', 'Compliance', 'Balance Sheet',
+  // sales / marketing
+  'B2B Sales', 'B2C Sales', 'Inside Sales', 'Field Sales', 'Lead Generation',
+  'Cold Calling', 'CRM', 'Salesforce', 'Business Development',
+  'Account Management', 'Digital Marketing', 'SEO', 'Social Media Marketing',
+  'Content Marketing', 'Email Marketing', 'Google Analytics', 'Market Research',
+  'Brand Management', 'Campaign Management', 'Client Relationship Management',
+  'Upselling', 'Territory Management',
+  // HR / admin
+  'Recruitment', 'Talent Acquisition', 'Onboarding', 'Employee Engagement',
+  'HRIS', 'Performance Management', 'Payroll Processing', 'Sourcing',
+  'Screening', 'Interviewing', 'HR Operations', 'Administration',
+  // operations / supply chain / retail
+  'Inventory Management', 'Supply Chain', 'Logistics', 'Warehouse Management',
+  'Procurement', 'Vendor Management', 'Quality Control', 'Quality Assurance',
+  'Production Planning', 'Merchandising', 'Store Operations', 'Cash Handling',
+  'Dispatch', 'Route Planning', 'Stock Audit',
+  // healthcare / education / legal / support
+  'Patient Care', 'Clinical', 'Nursing', 'Pharmacy', 'Medical Billing',
+  'Teaching', 'Curriculum Development', 'Lesson Planning', 'Classroom Management',
+  'Legal Research', 'Contract Drafting', 'Customer Support', 'Technical Support',
+  'Ticketing', 'Escalation Management', 'Escalation Handling',
+  // technology (still fully supported)
+  'JavaScript', 'TypeScript', 'React', 'Angular', 'Vue', 'Node.js', 'Python',
+  'Java', 'C++', 'C#', 'Rust', 'PHP', 'SQL', 'PostgreSQL', 'MySQL', 'MongoDB',
+  'Redis', 'AWS', 'Azure', 'GCP', 'Docker', 'Kubernetes', 'Git', 'REST',
+  'GraphQL', 'Machine Learning', 'Data Science', 'TensorFlow', 'PyTorch',
+  'Flutter', 'React Native', 'HTML', 'CSS', 'Agile', 'Scrum', 'JIRA',
+];
+
+function extractSkills(text: string): string[] {
+  const found = new Set<string>();
+
+  const add = (value: string) => {
+    const clean = value
+      .replace(/^[\s•\-–—*·|,;:]+/, '')
+      .replace(/[\s•\-–—*·|,;:]+$/, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+    if (!clean) return;
+    if (clean.length < 2 || clean.length > 40) return;
+    if (clean.split(' ').length > 4) return;
+    if (/^(and|or|etc|skills?|other|various|tools?|technologies)$/i.test(clean)) return;
+    const duplicate = Array.from(found).some((item) => item.toLowerCase() === clean.toLowerCase());
+    if (!duplicate) found.add(clean);
+  };
+
+  // 1) Whatever the candidate listed under a skills-style heading, in their own
+  // words. Inline ("Skills: Tally, GST") and block formats are both handled.
+  const inline = text.match(/^[ \t]*(?:key |core |technical |professional )?(?:skills|competencies|expertise|proficiencies)[ \t]*[:\-][ \t]*(.+)$/im);
+  if (inline && inline[1]) {
+    inline[1].split(/[\n,;|•·]+/).forEach(add);
+  }
+
+  const heading = text.match(/^[ \t]*(?:key |core |technical |professional )?(?:skills|competencies|expertise|proficiencies|tools(?: &| and)? technologies)[ \t]*:?[ \t]*$/im);
+  if (heading && heading.index !== undefined) {
+    const rest = text.slice(heading.index + heading[0].length);
+    const stop = rest.search(/\n[ \t]*(?:experience|work experience|employment|education|projects?|certifications?|achievements?|awards?|languages?|interests?|references?|personal details)[ \t]*:?[ \t]*\n/i);
+    const section = stop >= 0 ? rest.slice(0, stop) : rest.slice(0, 600);
+    section.split(/[\n,;|•·]+/).forEach(add);
+  }
+
+  // 2) Domain tools and skills that appear anywhere in the text, so a resume
+  // without a tidy "Skills" heading still produces real search terms.
+  const lower = text.toLowerCase();
+  SKILL_VOCABULARY.forEach((skill) => {
+    const needle = skill.toLowerCase();
+    const hit = needle.length <= 4
+      ? new RegExp(`(^|[^a-z])${escapeRegex(needle)}([^a-z]|$)`, 'i').test(lower)
+      : lower.includes(needle);
+    if (hit) add(skill);
+  });
+
+  return Array.from(found).slice(0, 20);
+}
+
+const RESUME_ROLE_WORDS = /\b(manager|management|executive|officer|engineer|developer|analyst|accountant|accounts|assistant|specialist|consultant|advisor|coordinator|supervisor|lead|head|clerk|nurse|teacher|trainer|designer|technician|operator|receptionist|sales|marketing|recruiter|administrator|architect|auditor|cashier|intern|associate|director|agent|representative|scientist|writer|editor|paralegal|pharmacist|chef|security|superintendent|deputy|president|owner|partner)\b/i;
+
+const RESUME_YEAR_RANGE = /((?:19|20)\d{2})\s*(?:-|–|—|to)\s*((?:19|20)\d{2}|present|current|till\s+date|date)/i;
 
 function extractExperience(text: string): Array<{title: string; company: string; duration: string; description: string}> {
   const experience: Array<{title: string; company: string; duration: string; description: string}> = [];
-  
-  const expSectionMatch = text.match(/experience[:\s]*([\s\S]*?)(?=\n\s*education|\n\s*skills|\n\s*projects|$)/i);
-  
-  if (expSectionMatch) {
-    const expText = expSectionMatch[1];
-    const jobBlocks = expText.split(/\n(?=[A-Z][a-z]+ [A-Z]|Senior |Junior |Lead |Staff )/);
-    
-    jobBlocks.forEach(block => {
-      const lines = block.split('\n').filter(l => l.trim());
-      if (lines.length >= 2) {
-        const title = lines[0] || '';
-        const company = lines[1] || '';
-        const durationMatch = block.match(/(\d{4}\s*[-–]\s*(?:\d{4}|Present|Current))/i);
-        const duration = durationMatch ? durationMatch[0] : '';
-        const description = lines.slice(2).join(' ').substring(0, 200);
-        
-        if (title && company) {
-          experience.push({ title, company, duration, description });
-        }
-      }
-    });
+
+  // Prefer the experience section, but fall back to the whole document: plenty
+  // of resumes label it "Employment History", "Career", or nothing at all.
+  let section = text;
+  const headingMatch = text.match(/(?:work\s+)?experience|employment\s+history|professional\s+experience|career\s+history|work\s+history/i);
+  if (headingMatch && headingMatch.index !== undefined) {
+    const rest = text.slice(headingMatch.index + headingMatch[0].length);
+    const stop = rest.search(/\n[ \t]*(?:education|academic|skills|projects?|certifications?|achievements?|awards?|languages?|interests?|references?)[ \t]*:?[ \t]*\n/i);
+    section = stop >= 0 ? rest.slice(0, stop) : rest;
   }
-  
+
+  const lines = section
+    .split('\n')
+    .map((line) => line.replace(/\s+/g, ' ').trim())
+    .filter(Boolean);
+
+  let block: string[] = [];
+
+  const flush = () => {
+    const blockText = block.join(' ');
+    const range = blockText.match(RESUME_YEAR_RANGE);
+    if (!range) {
+      block = [];
+      return;
+    }
+
+    const duration = range[1] + ' - ' + range[2];
+    // A "Core Competencies: B2B Sales" line is a skills heading, not a job title.
+    const isHeading = (line: string) =>
+      /^(core |key |technical |professional )?(competencies|skills|expertise|proficiencies)/i.test(line) ||
+      /^[A-Za-z][A-Za-z /&]{1,24}:/.test(line);
+    const titleLine =
+      block.find((line) => RESUME_ROLE_WORDS.test(line) && line.length <= 90 && !isHeading(line)) ||
+      block.find((line) => !isHeading(line)) ||
+      block[0];
+
+    // "Accounts Executive, Sharma Traders" puts title and company on one line.
+    const parts = titleLine.replace(RESUME_YEAR_RANGE, '').split(/\s*(?:\||•|·|,)\s*/).filter(Boolean);
+    let title = (parts[0] || '').trim();
+    if (title.includes(':')) title = title.split(':').pop()!.trim();
+
+    let company = (parts[1] || '').trim();
+    if (!company) {
+      const neighbour = block.find((line) => line !== titleLine && !RESUME_YEAR_RANGE.test(line) && line.length <= 90);
+      company = neighbour ? neighbour.split(/\s*(?:\||•|·|,)\s*/)[0].trim() : '';
+    }
+
+    const description = block.filter((line) => line !== titleLine && line !== company).join(' ').slice(0, 200);
+
+    if (title.length > 2) experience.push({ title, company, duration, description });
+    block = [];
+  };
+
+  lines.forEach((line) => {
+    block.push(line);
+    if (RESUME_YEAR_RANGE.test(line)) flush();
+    else if (block.length > 6) block = block.slice(-3);
+  });
+
   return experience.slice(0, 5);
 }
 
