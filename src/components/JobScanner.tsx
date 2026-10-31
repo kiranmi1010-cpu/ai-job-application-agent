@@ -20,6 +20,7 @@ import {
 import { dbHelpers } from '../db';
 import { Job } from '../types';
 import { searchJobsWithQuery } from '../services/jobSearch';
+import ApplyPanel from './ApplyPanel';
 
 export default function JobScanner() {
   const [jobs, setJobs] = useState<Job[]>([]);
@@ -31,6 +32,7 @@ export default function JobScanner() {
   const [activeTab, setActiveTab] = useState<'ai-matched' | 'all-jobs'>('ai-matched');
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [applyJob, setApplyJob] = useState<any | null>(null);
 
   useEffect(() => {
     loadJobs();
@@ -364,9 +366,9 @@ export default function JobScanner() {
                 {job.status === 'pending' && (
                   <div className="flex items-center gap-2">
                     <button
-                      onClick={() => handleApprove(Number(job.id))}
+                      onClick={() => setApplyJob(job)}
                       className="p-2 bg-green-50 text-green-600 rounded-lg hover:bg-green-100 transition-colors"
-                      title="Approve & Apply"
+                      title="Prepare & apply"
                     >
                       <CheckCircle size={18} />
                     </button>
@@ -431,6 +433,8 @@ export default function JobScanner() {
           </motion.div>
         ))}
       </div>
+
+      <ApplyPanel job={applyJob} onClose={() => setApplyJob(null)} onDone={loadJobs} />
     </div>
   );
 }

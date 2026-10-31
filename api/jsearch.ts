@@ -1,4 +1,6 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
+import { fromLinkedIn } from './sources-linkedin';
+import { boardSearchLinks } from './board-links';
 
 // JSearch API configuration from environment variables
 const RAPIDAPI_KEY = process.env.RAPIDAPI_KEY || '';
@@ -129,6 +131,7 @@ async function fromArbeitnow(params: Params): Promise<NormalizedJob[]> {
 /** Try each free source in turn; returns null if all fail. */
 async function freeFallback(params: Params): Promise<{ jobs: NormalizedJob[]; source: string } | null> {
   const sources: Array<[string, (p: Params) => Promise<NormalizedJob[]>]> = [
+    ['LinkedIn', (p) => fromLinkedIn(p.query, p.location || 'India')],
     ['Remotive', fromRemotive],
     ['Jobicy', fromJobicy],
     ['Arbeitnow', fromArbeitnow],
@@ -231,7 +234,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         if (jobs.length) {
           return res.status(200).json({
             success: true,
-            data: { jobs, request_information: data.request_information || {} },
+            data: { jobs, request_information: data.request_information || {}, search_links: boardSearchLinks(params.query, params.location || 'India') },
           });
         }
       } else {
@@ -253,6 +256,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       data: {
         jobs: fallback.jobs,
         request_information: { status: 'fallback', source: fallback.source },
+        search_links: boardSearchLinks(params.query, params.location || 'India'),
       },
       ...(RAPIDAPI_KEY ? {} : { notice: 'RAPIDAPI_KEY not set - using free sources' }),
     });

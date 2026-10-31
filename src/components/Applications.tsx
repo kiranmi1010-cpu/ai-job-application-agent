@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
 import {
   CheckCircle,
@@ -12,10 +12,35 @@ import {
   FileText
 } from 'lucide-react';
 import { Application } from '../types';
-import { mockApplications } from '../data';
+import { dbHelpers } from '../db';
 
 export default function Applications() {
-  const [applications] = useState<Application[]>(mockApplications);
+  const [applications, setApplications] = useState<Application[]>([]);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const [apps, jobs] = await Promise.all([dbHelpers.getApplications(), dbHelpers.getJobs()]);
+        const byId = new Map(jobs.map((j) => [Number(j.id), j]));
+        setApplications(
+          apps.map((a) => ({
+            id: 'app-' + a.id,
+            job: (byId.get(Number(a.jobId)) as any) || {
+              id: a.jobId, title: 'Job ' + a.jobId, company: '', location: '', type: 'Full-time',
+              description: '', requirements: [], matchScore: 0, source: '', url: '',
+              postedDate: '', status: 'applied',
+            },
+            status: a.status as any,
+            appliedAt: a.appliedAt ? new Date(a.appliedAt) : undefined,
+            emailDraft: a.emailDraft,
+            coverLetter: a.coverLetter,
+          }))
+        );
+      } catch (err) {
+        console.error('Failed to load applications:', err);
+      }
+    })();
+  }, []);
   const [filterStatus, setFilterStatus] = useState<string>('all');
   const [selectedApp, setSelectedApp] = useState<Application | null>(null);
 
