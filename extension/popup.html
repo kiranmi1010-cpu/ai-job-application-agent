@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>JobPilot Assist</title>
+    <style>
+      :root { color-scheme: light; }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        width: 380px;
+        font: 13px/1.45 ui-sans-serif, system-ui, "Segoe UI", sans-serif;
+        color: #0f172a;
+        background: #f8fafc;
+      }
+      header { padding: 14px 16px 10px; background: linear-gradient(135deg, #2563eb, #7c3aed); color: white; }
+      header h1 { margin: 0; font-size: 15px; letter-spacing: .3px; }
+      header p { margin: 3px 0 0; font-size: 11px; opacity: .85; }
+      main { padding: 14px 16px 16px; display: grid; gap: 12px; }
+      .card { background: white; border: 1px solid #e2e8f0; border-radius: 12px; padding: 12px; }
+      .job-title { font-weight: 600; font-size: 14px; margin: 0 0 2px; }
+      .job-meta { margin: 0; color: #64748b; font-size: 12px; }
+      .row { display: flex; gap: 8px; flex-wrap: wrap; }
+      button {
+        flex: 1 1 auto; padding: 9px 12px; border-radius: 9px; border: 1px solid transparent;
+        font: 600 12px/1 ui-sans-serif, system-ui, "Segoe UI", sans-serif; cursor: pointer;
+      }
+      button:disabled { opacity: .5; cursor: not-allowed; }
+      .primary { background: linear-gradient(135deg, #2563eb, #7c3aed); color: white; }
+      .ghost { background: white; border-color: #cbd5e1; color: #0f172a; }
+      label { font-size: 10px; text-transform: uppercase; letter-spacing: .08em; color: #64748b; font-weight: 600; }
+      input, textarea {
+        width: 100%; margin-top: 4px; padding: 7px 9px; border: 1px solid #cbd5e1;
+        border-radius: 8px; font: 12px/1.4 inherit; background: #f8fafc;
+      }
+      textarea { min-height: 118px; resize: vertical; }
+      .status { font-size: 11px; color: #475569; min-height: 15px; }
+      .status.error { color: #b91c1c; }
+      .status.ok { color: #047857; }
+      .muted { font-size: 10.5px; color: #64748b; }
+      .hidden { display: none; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>JobPilot Assist</h1>
+      <p>Read this posting, draft the letter, fill the form. You press submit.</p>
+    </header>
+
+    <main>
+      <div class="card">
+        <p class="job-title" id="jobTitle">No supported job page detected</p>
+        <p class="job-meta" id="jobMeta">Open a posting on LinkedIn, Naukri, Indeed, Glassdoor or Wellfound.</p>
+      </div>
+
+      <div class="row">
+        <button class="primary" id="draftBtn" disabled>Draft cover letter</button>
+        <button class="ghost" id="rescanBtn">Re-read page</button>
+      </div>
+
+      <div class="row">
+        <button class="ghost" id="copyBtn" disabled>Copy letter</button>
+        <button class="ghost" id="fillBtn" disabled>Fill application form</button>
+      </div>
+
+      <div class="status" id="status"></div>
+
+      <div class="card">
+        <label for="letter">Cover letter</label>
+        <textarea id="letter" placeholder="Draft one here, or write your own."></textarea>
+      </div>
+
+      <details class="card">
+        <summary class="muted" style="cursor: pointer">Your details (used for letters and autofill)</summary>
+        <div style="display: grid; gap: 8px; margin-top: 8px">
+          <div><label for="name">Name</label><input id="name" /></div>
+          <div><label for="email">Email</label><input id="email" /></div>
+          <div><label for="phone">Phone</label><input id="phone" /></div>
+          <div><label for="skills">Skills (comma separated)</label><input id="skills" /></div>
+          <div><label for="linkedin">LinkedIn URL</label><input id="linkedin" /></div>
+          <button class="ghost" id="saveProfileBtn">Save details</button>
+        </div>
+      </details>
+
+      <p class="muted">
+        Nothing is submitted automatically. JobPilot prepares the letter and fills the fields; you review and press
+        submit on the site.
+      </p>
+    </main>
+
+    <script src="popup.js"></script>
+  </body>
+</html>

@@ -1,6 +1,4 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { fromLinkedIn } from './sources-linkedin';
-import { boardSearchLinks } from './board-links';
 
 // JSearch API configuration from environment variables
 const RAPIDAPI_KEY = process.env.RAPIDAPI_KEY || '';
@@ -146,6 +144,148 @@ async function freeFallback(params: Params): Promise<{ jobs: NormalizedJob[]; so
   }
   return null;
 }
+
+// LinkedIn job connector.
+//
+// Uses LinkedIn's public "guest" job search endpoint, which serves the same
+// cards as the logged-out jobs page and needs no account, cookie or API key.
+// It returns no description text, so the description field explains that the
+// posting itself must be opened for the full text.
+
+const UA =
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36';
+
+interface BoardJob {
+  job_id: string;
+  employer_name: string;
+  job_publisher: string;
+  job_title: string;
+  job_description: string;
+  job_apply_link: string;
+  job_city?: string;
+  job_country?: string;
+  job_is_remote?: boolean;
+  job_employment_type?: string;
+}
+
+const clean = (value: string) =>
+  value
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&#39;/g, "'")
+    .replace(/&quot;/g, '"')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+const grab = (card: string, pattern: RegExp) => {
+  const match = card.match(pattern);
+  return match ? clean(match[1]) : '';
+};
+
+async function fromLinkedIn(
+  query: string,
+  location = 'India',
+  start = 0,
+): Promise<BoardJob[]> {
+  const url =
+    'https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search' +
+    `?keywords=${encodeURIComponent(query)}` +
+    `&location=${encodeURIComponent(location)}` +
+    `&start=${start}`;
+
+  const response = await fetch(url, {
+    headers: { 'User-Agent': UA, 'Accept-Language': 'en-US,en;q=0.9' },
+    signal: AbortSignal.timeout(7000),
+  });
+  if (!response.ok) throw new Error(`linkedin ${response.status}`);
+
+  const html = await response.text();
+  const cards = html.split('<li').slice(1);
+
+  const jobs: BoardJob[] = cards
+    .map((card) => {
+      const id =
+        grab(card, /data-entity-urn="urn:li:jobPosting:(\d+)"/) ||
+        grab(card, /\/jobs\/view\/(\d+)/);
+      const title = grab(card, /base-search-card__title[^>]*>([\s\S]*?)<\/h3>/);
+      const company = grab(card, /base-search-card__subtitle[^>]*>([\s\S]*?)<\/h4>/);
+      const place = grab(card, /job-search-card__location[^>]*>([\s\S]*?)<\/span>/);
+      const link = grab(card, /href="(https:\/\/[^"]*linkedin\.com\/jobs\/view\/[^"]*)"/);
+      const posted = grab(card, /datetime="([^"]+)"/);
+
+      return {
+        job_id: `linkedin-${id}`,
+        employer_name: company || 'Unknown',
+        job_publisher: 'LinkedIn',
+        job_title: title,
+        job_description: `${title} at ${company || 'a company'} (${place || location}). Open the posting for the full description.`,
+        job_apply_link: link || (id ? `https://www.linkedin.com/jobs/view/${id}` : ''),
+        job_city: place || undefined,
+        job_country: location,
+        job_is_remote: /remote/i.test(place),
+        job_employment_type: 'Full-time',
+        ...(posted ? { job_posted_at_datetime_utc: posted } : {}),
+      } as BoardJob;
+    })
+    .filter((job) => job.job_title && job.job_id);
+
+  if (!jobs.length) throw new Error('linkedin empty');
+  return jobs;
+}
+
+
+// Deep links for boards that cannot be fetched server-side.
+//
+// Indeed and Glassdoor both answer non-browser requests with 403 (Cloudflare /
+// security pages) and Naukri's search API replies "recaptcha required". Rather
+// than pretend those boards are connected, the UI links the user straight to
+// the same search on each board.
+
+interface BoardLink {
+  board: string;
+  url: string;
+  reason: string;
+}
+
+const slug = (value: string) =>
+  value
+    .toLowerCase()
+    .replace(/[^a-z0-9\s-]/g, '')
+    .trim()
+    .replace(/\s+/g, '-');
+
+function boardSearchLinks(query: string, location = 'India'): BoardLink[] {
+  const q = encodeURIComponent(query);
+  const l = encodeURIComponent(location);
+  return [
+    {
+      board: 'Naukri',
+      url: `https://www.naukri.com/${slug(query)}-jobs`,
+      reason: 'search API requires a captcha',
+    },
+    {
+      board: 'Indeed',
+      url: `https://in.indeed.com/jobs?q=${q}&l=${l}`,
+      reason: 'blocks automated requests (403)',
+    },
+    {
+      board: 'Glassdoor',
+      url: `https://www.glassdoor.co.in/Job/jobs.htm?sc.keyword=${q}`,
+      reason: 'blocks automated requests (403)',
+    },
+    {
+      board: 'Wellfound',
+      url: `https://wellfound.com/jobs?query=${q}`,
+      reason: 'requires a logged-in session',
+    },
+    {
+      board: 'LinkedIn',
+      url: `https://www.linkedin.com/jobs/search/?keywords=${q}&location=${l}`,
+      reason: 'search is fetched directly',
+    },
+  ];
+}
+
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   // CORS headers

@@ -1,0 +1,39 @@
+{
+  "manifest_version": 3,
+  "name": "JobPilot Assist",
+  "version": "1.0.0",
+  "description": "Pull the job you are viewing, draft a tailored cover letter, and fill the application form.",
+  "permissions": ["storage", "activeTab", "clipboardWrite"],
+  "host_permissions": [
+    "https://ai-job-application-agent-pi.vercel.app/*",
+    "https://www.linkedin.com/*",
+    "https://in.linkedin.com/*",
+    "https://www.naukri.com/*",
+    "https://www.indeed.com/*",
+    "https://in.indeed.com/*",
+    "https://www.glassdoor.co.in/*",
+    "https://www.glassdoor.com/*",
+    "https://wellfound.com/*"
+  ],
+  "background": { "service_worker": "background.js" },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "JobPilot Assist"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://www.linkedin.com/*",
+        "https://in.linkedin.com/*",
+        "https://www.naukri.com/*",
+        "https://www.indeed.com/*",
+        "https://in.indeed.com/*",
+        "https://www.glassdoor.co.in/*",
+        "https://www.glassdoor.com/*",
+        "https://wellfound.com/*"
+      ],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}
