@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   CheckCircle,
@@ -12,27 +12,80 @@ import {
   Send,
   Edit3
 } from 'lucide-react';
-import { ApprovalItem } from '../types';
-import { mockApprovals } from '../data';
+import { ApprovalItem, Job } from '../types';
+import { dbHelpers } from '../db';
 
 export default function Approvals() {
-  const [approvals, setApprovals] = useState<ApprovalItem[]>(mockApprovals);
+  const [approvals, setApprovals] = useState<ApprovalItem[]>([]);
   const [selectedApproval, setSelectedApproval] = useState<ApprovalItem | null>(null);
   const [showMobileView, setShowMobileView] = useState(false);
 
-  const handleApprove = (id: string) => {
-    setApprovals(approvals.filter(a => a.id !== id));
-    setSelectedApproval(null);
+  // Real queue: applications sitting in draft/pending_approval for this user,
+  // joined to their job. No canned demo data.
+  const loadApprovals = async () => {
+    try {
+      const [applications, jobs] = await Promise.all([dbHelpers.getApplications(), dbHelpers.getJobs()]);
+      const jobById = new Map(jobs.map((job) => [Number(job.id), job]));
+      const pending = applications.filter((app) => app.status === 'pending_approval' || app.status === 'draft');
+
+      setApprovals(
+        pending.map((application) => {
+          const job = jobById.get(Number(application.jobId));
+          const draft: any = application.emailDraft;
+          const fallback: Job = {
+            externalId: 'application-' + application.id,
+            title: draft?.subject
+              ? String(draft.subject).replace(/^(Application for|Applying for)\s*/i, '').trim()
+              : 'Role no longer in your saved jobs',
+            company: 'Application #' + application.id,
+            location: '',
+            type: 'Full-time',
+            description: application.coverLetter || '',
+            requirements: [],
+            matchScore: job?.matchScore ?? 0,
+            source: 'JobPilot',
+            url: '',
+            postedDate: '',
+            status: 'pending',
+            foundAt: application.createdAt,
+          };
+
+          return {
+            id: String(application.id),
+            type: 'application' as const,
+            job: job ?? fallback,
+            preview: application.emailDraft,
+            createdAt: application.createdAt,
+            priority: (job?.matchScore ?? 0) >= 85 ? ('high' as const) : ('medium' as const),
+          };
+        })
+      );
+    } catch (error) {
+      console.error('Error loading approvals:', error);
+    }
   };
 
-  const handleReject = (id: string) => {
-    setApprovals(approvals.filter(a => a.id !== id));
+  useEffect(() => {
+    loadApprovals();
+  }, []);
+
+  const handleApprove = async (id: string) => {
+    setApprovals((prev) => prev.filter((item) => item.id !== id));
     setSelectedApproval(null);
+    await dbHelpers.updateApplicationStatus(Number(id), 'submitted');
   };
 
-  const handleApproveAll = () => {
+  const handleReject = async (id: string) => {
+    setApprovals((prev) => prev.filter((item) => item.id !== id));
+    setSelectedApproval(null);
+    await dbHelpers.updateApplicationStatus(Number(id), 'rejected');
+  };
+
+  const handleApproveAll = async () => {
+    const ids = approvals.map((item) => item.id);
     setApprovals([]);
     setSelectedApproval(null);
+    await Promise.all(ids.map((id) => dbHelpers.updateApplicationStatus(Number(id), 'submitted')));
   };
 
   const getPriorityColor = (priority: string) => {

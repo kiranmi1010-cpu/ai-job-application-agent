@@ -2,6 +2,22 @@ import { ParsedResumeData } from './gemini';
 import { matchJobsWithGemini, JobMatchResult } from './gemini';
 import { searchJobs as jsearchAPI, formatSalary, formatLocation, formatPostedDate, extractSkillsFromDescription, JSearchJob } from './jsearch';
 
+export interface SearchTargets {
+  /** Roles the candidate actually wants; wins over anything inferred from the resume. */
+  roles?: string[];
+  location?: string;
+}
+
+/** "Accounts Manager, Sales Executive" -> ["Accounts Manager", "Sales Executive"] */
+export function parseRoleList(input?: string | null): string[] {
+  if (!input) return [];
+  return input
+    .split(/[,;\n|]/)
+    .map((role) => role.replace(/\s+/g, ' ').trim())
+    .filter((role) => role.length >= 2)
+    .slice(0, 5);
+}
+
 export interface JobListing {
   externalId: string;
   title: string;
@@ -162,17 +178,20 @@ function calculateMatchScoreLocal(resume: ParsedResumeData, job: any): number {
   let score = 0;
   let maxScore = 0;
 
-  // Skills match (40% weight)
-  const jobSkills = extractSkillsFromJob(job);
-  const matchedSkills = resume.skills.filter(skill => 
-    jobSkills.some(jobSkill => 
-      jobSkill.toLowerCase().includes(skill.toLowerCase()) ||
-      skill.toLowerCase().includes(jobSkill.toLowerCase())
-    )
-  );
-  
-  if (jobSkills.length > 0) {
-    score += (matchedSkills.length / jobSkills.length) * 40;
+  // Skills match (40% weight). Score the candidate's own skills against the
+  // posting text instead of a hardcoded tech vocabulary, so a finance, design
+  // or sales resume is judged on its real field.
+  const jobText = [
+    job.title || '',
+    job.description || '',
+    Array.isArray(job.requirements) ? job.requirements.join(' ') : '',
+  ].join(' ').toLowerCase();
+
+  const skills = (resume.skills || []).map((skill) => String(skill || '').trim()).filter(Boolean);
+  const matchedSkills = skills.filter((skill) => jobText.includes(skill.toLowerCase()));
+
+  if (skills.length > 0) {
+    score += Math.min(1, matchedSkills.length / Math.min(skills.length, 6)) * 40;
   }
   maxScore += 40;
 
@@ -209,21 +228,6 @@ function calculateMatchScoreLocal(resume: ParsedResumeData, job: any): number {
   return Math.round((score / maxScore) * 100);
 }
 
-function extractSkillsFromJob(job: any): string[] {
-  if (job.requirements && Array.isArray(job.requirements)) {
-    return job.requirements;
-  }
-  
-  const text = `${job.title || ''} ${job.description || ''}`.toLowerCase();
-  
-  const commonSkills = [
-    'react', 'angular', 'vue', 'javascript', 'typescript', 'node', 'python', 'java',
-    'sql', 'aws', 'docker', 'kubernetes', 'git', 'rest', 'graphql', 'html', 'css',
-    'mongodb', 'postgresql', 'redis', 'ci/cd', 'agile', 'scrum'
-  ];
-  
-  return commonSkills.filter(skill => text.includes(skill));
-}
 
 function extractKeywordsFromExperience(resume: ParsedResumeData): string[] {
   const keywords: string[] = [];
@@ -271,15 +275,15 @@ function detectJobLevel(title: string): 'entry' | 'junior' | 'mid' | 'senior' {
 /**
  * Search jobs based on resume - uses real JSearch API
  */
-export async function searchJobsFromResume(resume: ParsedResumeData): Promise<JobListing[]> {
+export async function searchJobsFromResume(resume: ParsedResumeData, targets?: SearchTargets): Promise<JobListing[]> {
   const allJobs: JobListing[] = [];
   
   // Create search queries from resume
-  const searchQueries = generateSearchQueries(resume);
+  const searchQueries = generateSearchQueries(resume, targets);
   
   // Search for each query (limit to 2 queries to stay within API limits)
   for (const query of searchQueries.slice(0, 2)) {
-    const jobs = await searchJobsWithQuery(query, { numPages: 1 });
+    const jobs = await searchJobsWithQuery(query, { numPages: 1, location: targets?.location || undefined });
     allJobs.push(...jobs);
   }
   
@@ -304,21 +308,27 @@ export async function searchJobsFromResume(resume: ParsedResumeData): Promise<Jo
   return jobsWithScores.sort((a, b) => b.matchScore - a.matchScore);
 }
 
-export function generateSearchQueries(resume: ParsedResumeData): string[] {
+export function generateSearchQueries(resume: ParsedResumeData, targets?: SearchTargets): string[] {
   const queries: string[] = [];
-  
-  // Use top skills with job title keywords
-  const topSkills = resume.skills.slice(0, 3);
-  topSkills.forEach(skill => {
-    queries.push(`${skill} developer`);
+  const roles = (targets?.roles || []).map((role) => String(role || '').trim()).filter(Boolean);
+
+  // What the candidate says they want always beats what the resume implies.
+  queries.push(...roles);
+
+  if (roles.length === 0) {
+    (resume.experience || []).slice(0, 3).forEach((exp) => {
+      if (exp?.title?.trim()) queries.push(exp.title.trim());
+    });
+  }
+
+  // Bare skills, with no job family appended: "Tally" is as valid a search in
+  // accounting as "React" is in engineering.
+  (resume.skills || []).slice(0, 4).forEach((skill) => {
+    if (skill?.trim()) queries.push(skill.trim());
   });
-  
-  // Use experience titles
-  resume.experience.slice(0, 2).forEach(exp => {
-    queries.push(exp.title);
-  });
-  
-  return [...new Set(queries)];
+
+  const cleaned = queries.map((query) => query.replace(/\s+/g, ' ').trim()).filter(Boolean);
+  return [...new Set(cleaned)];
 }
 
 function removeDuplicateJobs(jobs: JobListing[]): JobListing[] {
@@ -336,6 +346,6 @@ function removeDuplicateJobs(jobs: JobListing[]): JobListing[] {
 /**
  * Main function to search jobs - always uses real JSearch API
  */
-export async function searchJobs(resume: ParsedResumeData): Promise<JobListing[]> {
-  return searchJobsFromResume(resume);
+export async function searchJobs(resume: ParsedResumeData, targets?: SearchTargets): Promise<JobListing[]> {
+  return searchJobsFromResume(resume, targets);
 }

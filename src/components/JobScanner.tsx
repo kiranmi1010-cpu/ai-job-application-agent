@@ -15,11 +15,12 @@ import {
   Sparkles,
   ArrowRight,
   RefreshCw,
-  AlertCircle
+  AlertCircle,
+  Target
 } from 'lucide-react';
 import { dbHelpers } from '../db';
 import { Job } from '../types';
-import { searchJobsWithQuery, calculateMatchScoreWithGemini, generateSearchQueries } from '../services/jobSearch';
+import { searchJobsWithQuery, calculateMatchScoreWithGemini, generateSearchQueries, parseRoleList } from '../services/jobSearch';
 import ApplyPanel from './ApplyPanel';
 
 // Score a list of jobs against the parsed resume; never leave a job at 0 without trying.
@@ -49,6 +50,8 @@ export default function JobScanner() {
   const [error, setError] = useState<string | null>(null);
   const [applyJob, setApplyJob] = useState<any | null>(null);
   const [resume, setResume] = useState<any | null>(null);
+  const [targetRoles, setTargetRoles] = useState('');
+  const [locationPref, setLocationPref] = useState('');
 
   useEffect(() => {
     loadJobs();
@@ -57,7 +60,13 @@ export default function JobScanner() {
   const loadJobs = async () => {
     try {
       setError(null);
-      const [dbJobs, storedResume] = await Promise.all([dbHelpers.getJobs(), dbHelpers.getResume()]);
+      const [dbJobs, storedResume, storedSettings] = await Promise.all([
+        dbHelpers.getJobs(),
+        dbHelpers.getResume(),
+        dbHelpers.getSettings(),
+      ]);
+      setTargetRoles(storedSettings?.desiredRoles ?? '');
+      setLocationPref(storedSettings?.locationPreference ?? '');
       const parsedResume = storedResume?.parsedData ?? null;
       setResume(parsedResume ? { parsedData: parsedResume } : null);
       setJobs(dbJobs as any);
@@ -87,25 +96,71 @@ export default function JobScanner() {
     }
   };
 
+  const persistTargets = async (roles: string, location: string) => {
+    try {
+      const existing: any = (await dbHelpers.getSettings()) ?? {
+        gmailConnected: false,
+        googleConnected: false,
+        autoApply: false,
+        pushNotifications: false,
+        emailNotifications: false,
+        maxDailyApplications: 20,
+        minMatchScore: 75,
+        desiredRoles: '',
+        locationPreference: '',
+        salaryRange: '',
+        jobTypes: '',
+        companiesToSkip: '',
+        searchFrequency: 'Every 6 hours',
+        autoSearchFromResume: true,
+        skillBasedMatching: true,
+        experienceLevelMatching: true,
+      };
+      const base = { ...existing };
+      delete base.id;
+      await dbHelpers.saveSettings({ ...base, desiredRoles: roles, locationPreference: location });
+    } catch (e) {
+      console.warn('Could not save target roles', e);
+    }
+  };
+
   const handleSearch = async () => {
     const parsedResume = resume?.parsedData ?? null;
     const typed = searchQuery.trim();
-    const query = typed || (parsedResume ? generateSearchQueries(parsedResume)[0] || '' : '');
+    const roles = parseRoleList(targetRoles);
+    const location = locationPref.trim() || undefined;
 
-    if (!query) {
-      setError('Type a role to search for, or upload your resume so the search is built from your skills.');
+    // Typed text wins, then the roles the candidate declared, and only then
+    // titles/skills inferred from the resume.
+    const queries = typed
+      ? [typed]
+      : roles.length > 0
+        ? roles.slice(0, 2)
+        : parsedResume
+          ? generateSearchQueries(parsedResume).slice(0, 2)
+          : [];
+
+    if (queries.length === 0) {
+      setError('Tell me the role you want in the target roles box, or upload your resume.');
       return;
     }
 
     setSearching(true);
     setError(null);
-    if (!typed) setSearchQuery(query);
+    if (!typed) setSearchQuery(queries[0]);
 
     try {
-      const apiJobs = await searchJobsWithQuery(query, { numPages: 1 });
+      const batches = await Promise.all(queries.map((q) => searchJobsWithQuery(q, { numPages: 1, location })));
+      const seen = new Set<string>();
+      const apiJobs = batches.flat().filter((job) => {
+        const key = job.externalId || job.title + '-' + job.company;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
 
       if (apiJobs.length === 0) {
-        setError('No jobs found for "' + query + '". Try different keywords.');
+        setError('No jobs found for "' + queries.join('", "') + '". Try different keywords or a wider location.');
         setSearching(false);
         return;
       }
@@ -198,12 +253,23 @@ export default function JobScanner() {
           <p className="text-sm text-slate-500 mt-2 max-w-md mx-auto">
             Upload your resume first, and the AI will automatically search for matching job openings.
           </p>
-          <button
-            onClick={() => window.location.hash = '#resume'}
-            className="mt-6 px-6 py-3 bg-gradient-to-r from-blue-600 to-purple-600 text-white rounded-xl font-medium text-sm hover:opacity-90 transition-opacity"
-          >
-            Upload Resume
-          </button>
+          <div className="mt-6 flex items-center justify-center gap-3">
+            <button
+              onClick={() => window.location.hash = '#resume'}
+              className="px-6 py-3 bg-gradient-to-r from-blue-600 to-purple-600 text-white rounded-xl font-medium text-sm hover:opacity-90 transition-opacity"
+            >
+              Upload Resume
+            </button>
+            {(resume || targetRoles.trim() || locationPref.trim()) && (
+              <button
+                onClick={handleSearch}
+                disabled={searching}
+                className="px-6 py-3 bg-white border border-slate-200 text-slate-700 rounded-xl font-medium text-sm hover:bg-slate-50 transition-colors disabled:opacity-50"
+              >
+                {searching ? 'Searching...' : 'Search now'}
+              </button>
+            )}
+          </div>
         </div>
       </div>
     );
@@ -215,7 +281,7 @@ export default function JobScanner() {
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
           <h1 className="text-2xl sm:text-3xl font-bold text-slate-900">Job Scanner</h1>
-          <p className="text-slate-500 mt-1">AI automatically finds jobs matching your resume profile</p>
+          <p className="text-slate-500 mt-1">{targetRoles.trim() ? 'Searching for ' + targetRoles + ' - every job is scored against your resume' : 'Set your target roles below, or let your resume decide what to search for'}</p>
         </div>
         <button
           onClick={handleRefresh}
@@ -297,13 +363,42 @@ export default function JobScanner() {
         </motion.div>
       )}
 
+      {/* What the candidate actually wants */}
+      <div className="bg-white rounded-2xl border border-slate-100 p-4 space-y-3">
+        <div className="flex items-center gap-2 text-sm font-semibold text-slate-800">
+          <Target size={16} className="text-purple-500" />
+          What you're looking for
+        </div>
+        <div className="grid sm:grid-cols-2 gap-3">
+          <input
+            type="text"
+            value={targetRoles}
+            onChange={(e) => setTargetRoles(e.target.value)}
+            onBlur={() => persistTargets(targetRoles, locationPref)}
+            placeholder="Target roles, e.g. 'Accounts Manager, Sales Executive'"
+            className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
+          />
+          <input
+            type="text"
+            value={locationPref}
+            onChange={(e) => setLocationPref(e.target.value)}
+            onBlur={() => persistTargets(targetRoles, locationPref)}
+            placeholder="Location, e.g. 'Pune' or 'Remote'"
+            className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
+          />
+        </div>
+        <p className="text-xs text-slate-500">
+          Saved automatically and used for every search. Leave it blank and JobPilot falls back to your job titles, then your skills.
+        </p>
+      </div>
+
       {/* Search & Filters */}
       <div className="flex flex-col sm:flex-row gap-3">
         <div className="flex-1 relative">
           <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
           <input
             type="text"
-            placeholder="Search jobs (e.g., 'React Developer', 'Data Scientist')..."
+            placeholder="Search jobs (e.g., 'Accounts Manager', 'Sales Executive')..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             onKeyPress={(e) => e.key === 'Enter' && handleSearch()}
@@ -313,7 +408,7 @@ export default function JobScanner() {
         </div>
         <button
           onClick={handleSearch}
-          disabled={searching || (!searchQuery.trim() && !resume)}
+          disabled={searching || (!searchQuery.trim() && !resume && !targetRoles.trim())}
           className="px-6 py-2.5 bg-gradient-to-r from-blue-600 to-purple-600 text-white rounded-xl font-medium text-sm hover:opacity-90 transition-opacity disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
         >
           {searching ? (

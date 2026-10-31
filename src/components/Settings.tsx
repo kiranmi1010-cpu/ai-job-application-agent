@@ -421,7 +421,7 @@ export default function Settings() {
                 type="text"
                 value={desiredRoles}
                 onChange={(e) => setDesiredRoles(e.target.value)}
-                placeholder="Frontend Engineer, Full Stack Developer"
+                placeholder="e.g. Accounts Manager, Data Analyst, Sales Executive"
                 className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
               />
             </div>

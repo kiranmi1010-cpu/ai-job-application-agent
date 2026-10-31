@@ -22,7 +22,7 @@ import {
   AlertCircle
 } from 'lucide-react';
 import { parseResumeFile, parseResumeText, ParsedResume } from '../services/resumeParser';
-import { searchJobs, JobListing } from '../services/jobSearch';
+import { searchJobs, JobListing, parseRoleList } from '../services/jobSearch';
 import { dbHelpers } from '../db';
 
 export default function ResumeUpload() {
@@ -155,7 +155,11 @@ export default function ResumeUpload() {
       }, 200);
 
       // Search for jobs using real JSearch API
-      const jobs = await searchJobs(resume);
+      const settings = await dbHelpers.getSettings();
+      const jobs = await searchJobs(resume, {
+        roles: parseRoleList(settings?.desiredRoles),
+        location: settings?.locationPreference?.trim() || undefined,
+      });
       
       clearInterval(progressInterval);
       setSearchProgress(100);
