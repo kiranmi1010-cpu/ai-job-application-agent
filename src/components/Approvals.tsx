@@ -12,7 +12,7 @@ import {
   Send,
   Edit3
 } from 'lucide-react';
-import { ApprovalItem, Job } from '../types';
+import { ApprovalItem } from '../types';
 import { dbHelpers } from '../db';
 
 export default function Approvals() {
@@ -25,15 +25,15 @@ export default function Approvals() {
   const loadApprovals = async () => {
     try {
       const [applications, jobs] = await Promise.all([dbHelpers.getApplications(), dbHelpers.getJobs()]);
-      const jobById = new Map(jobs.map((job) => [Number(job.id), job]));
+      const jobById = new Map<number, any>(jobs.map((job) => [Number(job.id), job as any]));
       const pending = applications.filter((app) => app.status === 'pending_approval' || app.status === 'draft');
 
       setApprovals(
         pending.map((application) => {
           const job = jobById.get(Number(application.jobId));
           const draft: any = application.emailDraft;
-          const fallback: Job = {
-            externalId: 'application-' + application.id,
+          const fallback: any = {
+            id: 'application-' + application.id,
             title: draft?.subject
               ? String(draft.subject).replace(/^(Application for|Applying for)\s*/i, '').trim()
               : 'Role no longer in your saved jobs',
@@ -54,7 +54,7 @@ export default function Approvals() {
             id: String(application.id),
             type: 'application' as const,
             job: job ?? fallback,
-            preview: application.emailDraft,
+            preview: application.emailDraft ?? ({ to: '', subject: '', body: '', attachments: [] } as any),
             createdAt: application.createdAt,
             priority: (job?.matchScore ?? 0) >= 85 ? ('high' as const) : ('medium' as const),
           };
