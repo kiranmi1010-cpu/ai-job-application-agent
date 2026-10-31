@@ -19,8 +19,23 @@ import {
 } from 'lucide-react';
 import { dbHelpers } from '../db';
 import { Job } from '../types';
-import { searchJobsWithQuery } from '../services/jobSearch';
+import { searchJobsWithQuery, calculateMatchScoreWithGemini, generateSearchQueries } from '../services/jobSearch';
 import ApplyPanel from './ApplyPanel';
+
+// Score a list of jobs against the parsed resume; never leave a job at 0 without trying.
+async function scoreJobs(resumeData: any, list: any[]) {
+  const matches = await calculateMatchScoreWithGemini(resumeData, list);
+  return list.map((job, index) => {
+    const key = String(job.externalId ?? job.id ?? 'job-' + index);
+    const match = matches.get(key);
+    return {
+      ...job,
+      matchScore: match?.matchScore ?? 0,
+      matchReasons: match?.reasons,
+      recommendation: match?.recommendation,
+    };
+  });
+}
 
 export default function JobScanner() {
   const [jobs, setJobs] = useState<Job[]>([]);
@@ -33,6 +48,7 @@ export default function JobScanner() {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [applyJob, setApplyJob] = useState<any | null>(null);
+  const [resume, setResume] = useState<any | null>(null);
 
   useEffect(() => {
     loadJobs();
@@ -41,8 +57,28 @@ export default function JobScanner() {
   const loadJobs = async () => {
     try {
       setError(null);
-      const dbJobs = await dbHelpers.getJobs();
+      const [dbJobs, storedResume] = await Promise.all([dbHelpers.getJobs(), dbHelpers.getResume()]);
+      const parsedResume = storedResume?.parsedData ?? null;
+      setResume(parsedResume ? { parsedData: parsedResume } : null);
       setJobs(dbJobs as any);
+
+      // Jobs found before a resume existed have no score. Score them once now.
+      const unscored = parsedResume ? dbJobs.filter((job) => !job.matchScore) : [];
+      if (unscored.length > 0) {
+        const scored = await scoreJobs(parsedResume, unscored);
+        await Promise.all(
+          scored.map((job) =>
+            job.id
+              ? dbHelpers.updateJobMatch(Number(job.id), {
+                  matchScore: job.matchScore,
+                  matchReasons: job.matchReasons,
+                  recommendation: job.recommendation,
+                })
+              : Promise.resolve()
+          )
+        );
+        setJobs((await dbHelpers.getJobs()) as any);
+      }
     } catch (error) {
       console.error('Error loading jobs:', error);
       setError('Failed to load jobs from database');
@@ -52,35 +88,37 @@ export default function JobScanner() {
   };
 
   const handleSearch = async () => {
-    if (!searchQuery.trim()) {
-      setError('Please enter a search query');
+    const parsedResume = resume?.parsedData ?? null;
+    const typed = searchQuery.trim();
+    const query = typed || (parsedResume ? generateSearchQueries(parsedResume)[0] || '' : '');
+
+    if (!query) {
+      setError('Type a role to search for, or upload your resume so the search is built from your skills.');
       return;
     }
 
     setSearching(true);
     setError(null);
+    if (!typed) setSearchQuery(query);
 
     try {
-      // Fetch real jobs from JSearch API
-      const apiJobs = await searchJobsWithQuery(searchQuery, {
-        numPages: 1,
-      });
+      const apiJobs = await searchJobsWithQuery(query, { numPages: 1 });
 
       if (apiJobs.length === 0) {
-        setError('No jobs found for your search query. Try different keywords.');
+        setError('No jobs found for "' + query + '". Try different keywords.');
         setSearching(false);
         return;
       }
 
-      // Save jobs to database
+      const scored = parsedResume ? await scoreJobs(parsedResume, apiJobs) : apiJobs;
+
       await dbHelpers.clearJobs();
-      await dbHelpers.saveJobs(apiJobs.map(job => ({
+      await dbHelpers.saveJobs(scored.map(job => ({
         ...job,
         status: 'pending' as const,
         foundAt: new Date()
       })));
 
-      // Reload jobs from database
       await loadJobs();
       setSearching(false);
     } catch (error) {
@@ -121,10 +159,8 @@ export default function JobScanner() {
   };
 
   const filteredJobs = jobs.filter(job => {
-    const matchesSearch = job.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      job.company.toLowerCase().includes(searchQuery.toLowerCase());
     const matchesFilter = filterType === 'all' || job.type === filterType;
-    return matchesSearch && matchesFilter;
+    return matchesFilter;
   });
 
   const aiMatchedJobs = [...jobs].sort((a, b) => b.matchScore - a.matchScore);
@@ -147,7 +183,11 @@ export default function JobScanner() {
       <div className="space-y-6">
         <div>
           <h1 className="text-2xl sm:text-3xl font-bold text-slate-900">Job Scanner</h1>
-          <p className="text-slate-500 mt-1">AI automatically finds jobs matching your resume profile</p>
+          <p className="text-slate-500 mt-1">
+            {resume
+              ? 'Matched against your resume — every job below is scored by how well it fits'
+              : 'Upload your resume on the Resume page so searches are built from your skills and each job gets a match score'}
+          </p>
         </div>
 
         <div className="bg-white rounded-2xl border border-slate-100 p-12 text-center">
@@ -273,7 +313,7 @@ export default function JobScanner() {
         </div>
         <button
           onClick={handleSearch}
-          disabled={searching || !searchQuery.trim()}
+          disabled={searching || (!searchQuery.trim() && !resume)}
           className="px-6 py-2.5 bg-gradient-to-r from-blue-600 to-purple-600 text-white rounded-xl font-medium text-sm hover:opacity-90 transition-opacity disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
         >
           {searching ? (

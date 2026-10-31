@@ -141,6 +141,17 @@ export const dbHelpers = {
     await db.jobs.clear();
   },
 
+  async updateJobMatch(
+    id: number,
+    patch: { matchScore?: number; matchReasons?: string[]; recommendation?: Job['recommendation'] }
+  ): Promise<void> {
+    await db.jobs.update(id, {
+      matchScore: patch.matchScore,
+      matchReasons: patch.matchReasons,
+      recommendation: patch.recommendation,
+    } as any);
+  },
+
   // Applications
   async saveApplication(application: Omit<Application, 'id'>): Promise<number> {
     return await db.applications.add(application);

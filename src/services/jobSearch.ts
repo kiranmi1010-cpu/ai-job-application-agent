@@ -88,33 +88,72 @@ export async function calculateMatchScoreWithGemini(
   jobs: any[]
 ): Promise<Map<string, JobMatchResult>> {
   const matchMap = new Map<string, JobMatchResult>();
-  
-  // Try Gemini first (batch all jobs)
+  const keyOf = (job: any, index: number) =>
+    String(job?.externalId ?? job?.id ?? job?.job_id ?? 'job-' + index);
+
+  const localResult = (job: any, index: number): JobMatchResult => {
+    const score = calculateMatchScoreLocal(resume, job);
+    return {
+      jobId: keyOf(job, index),
+      matchScore: score,
+      reasons: score > 0 ? ['Scored locally from the skills, title and seniority in your resume'] : [],
+      missingSkills: [],
+      recommendation: score >= 85 ? 'strong_apply' : score >= 70 ? 'consider' : 'skip',
+    };
+  };
+
   try {
-    const result = await matchJobsWithGemini(resume, jobs);
-    
-    if (result.success && result.data) {
-      result.data.forEach(match => {
-        matchMap.set(match.jobId, match);
+    const sent = jobs.map((job, index) => ({
+      ...job,
+      jobId: keyOf(job, index),
+      description: String(job.description || '').slice(0, 1200),
+    }));
+    const result = await matchJobsWithGemini(resume, sent);
+
+    if (result.success && Array.isArray(result.data) && result.data.length > 0) {
+      const known = new Set(jobs.map((job, index) => keyOf(job, index)));
+      const byId = new Map<string, JobMatchResult>();
+      const unresolved: JobMatchResult[] = [];
+
+      result.data.forEach((raw: any, index: number) => {
+        const id = String(raw?.jobId ?? raw?.job_id ?? raw?.id ?? '');
+        const numeric = Number(raw?.matchScore ?? raw?.score);
+        const score = Number.isFinite(numeric) ? Math.max(0, Math.min(100, Math.round(numeric))) : 0;
+        const entry: JobMatchResult = {
+          jobId: id || 'job-' + index,
+          matchScore: score,
+          reasons: Array.isArray(raw?.reasons) ? raw.reasons : [],
+          missingSkills: Array.isArray(raw?.missingSkills) ? raw.missingSkills : [],
+          recommendation:
+            raw?.recommendation === 'strong_apply' || raw?.recommendation === 'consider' || raw?.recommendation === 'skip'
+              ? raw.recommendation
+              : score >= 85 ? 'strong_apply' : score >= 70 ? 'consider' : 'skip',
+        };
+        if (id && known.has(id)) byId.set(id, entry);
+        else unresolved.push(entry);
+      });
+
+      // If the model dropped or invented ids, fall back to positional order.
+      let cursor = 0;
+      jobs.forEach((job, index) => {
+        const key = keyOf(job, index);
+        if (byId.has(key)) return;
+        const fallback = unresolved[cursor++];
+        if (fallback) byId.set(key, { ...fallback, jobId: key });
+      });
+
+      jobs.forEach((job, index) => {
+        const key = keyOf(job, index);
+        const match = byId.get(key);
+        matchMap.set(key, match && match.matchScore > 0 ? match : localResult(job, index));
       });
       return matchMap;
     }
   } catch (error) {
     console.warn('Gemini job matching failed, using local fallback:', error);
   }
-  
-  // Fallback to local matching
-  jobs.forEach(job => {
-    const localScore = calculateMatchScoreLocal(resume, job);
-    matchMap.set(job.externalId || job.id, {
-      jobId: job.externalId || job.id,
-      matchScore: localScore,
-      reasons: ['Matched based on skills and experience'],
-      missingSkills: [],
-      recommendation: localScore >= 85 ? 'strong_apply' : localScore >= 70 ? 'consider' : 'skip'
-    });
-  });
-  
+
+  jobs.forEach((job, index) => matchMap.set(keyOf(job, index), localResult(job, index)));
   return matchMap;
 }
 
@@ -265,7 +304,7 @@ export async function searchJobsFromResume(resume: ParsedResumeData): Promise<Jo
   return jobsWithScores.sort((a, b) => b.matchScore - a.matchScore);
 }
 
-function generateSearchQueries(resume: ParsedResumeData): string[] {
+export function generateSearchQueries(resume: ParsedResumeData): string[] {
   const queries: string[] = [];
   
   // Use top skills with job title keywords

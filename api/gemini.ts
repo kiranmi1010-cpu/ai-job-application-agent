@@ -123,7 +123,17 @@ ${text}`;
   
   try {
     const parsed = JSON.parse(cleanedResponse);
-    return { success: true, data: parsed };
+    const list = Array.isArray(parsed)
+      ? parsed
+      : Array.isArray(parsed?.matches)
+        ? parsed.matches
+        : Array.isArray(parsed?.results)
+          ? parsed.results
+          : null;
+    if (!list) {
+      return { success: false, error: 'Gemini did not return a list of matches', raw: cleanedResponse };
+    }
+    return { success: true, data: list };
   } catch (e) {
     return { success: false, error: 'Failed to parse Gemini response', raw: cleanedResponse };
   }
@@ -157,7 +167,7 @@ Experience: ${resume.experience?.map((e: any) => `${e.title} at ${e.company} (${
 Education: ${resume.education?.map((e: any) => `${e.degree} from ${e.institution}`).join('; ')}
 
 Jobs to evaluate:
-${jobs.map((j, i) => `[${i}] ID: ${j.externalId || j.id}, Title: ${j.title}, Company: ${j.company}, Location: ${j.location}, Requirements: ${j.requirements?.join(', ')}`).join('\n')}
+${jobs.map((j, i) => `[${i}] ID: ${j.externalId || j.id}, Title: ${j.title}, Company: ${j.company}, Location: ${j.location}, Requirements: ${j.requirements?.join(', ')}, Description: ${String(j.description || '').slice(0, 600)}`).join('\n')}
 
 Return ONLY the JSON array, no markdown or explanations.`;
 
