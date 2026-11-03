@@ -5,6 +5,10 @@ const RAPIDAPI_KEY = process.env.RAPIDAPI_KEY || '';
 const RAPIDAPI_HOST = process.env.RAPIDAPI_HOST || 'jsearch.p.rapidapi.com';
 const JSEARCH_BASE_URL = `https://${RAPIDAPI_HOST}/search`;
 
+// The LinkedIn card search is followed by a description fetch for the top few
+// hits, so give the function room to finish instead of being cut off mid-way.
+export const config = { maxDuration: 30 };
+
 // Normalised shape the frontend expects (JSearchJob in src/services/jsearch.ts)
 interface NormalizedJob {
   job_id: string;
@@ -36,6 +40,40 @@ type Params = {
   company_name?: string;
   job_required_skills?: string;
 };
+
+/**
+ * JSearch filters by ISO country code and has no "location" parameter, so the
+ * city has to be written into the query while the country picks the market.
+ * Without this the API happily returns US postings for an Indian search.
+ */
+function countryCode(location?: string): string {
+  const value = (location || '').toLowerCase();
+  if (!value) return 'in';
+  if (
+    /(india|pune|mumbai|bangalore|bengaluru|delhi|noida|gurgaon|gurugram|hyderabad|chennai|kolkata|ahmedabad|jaipur|indore|kochi|coimbatore|chandigarh|lucknow|nagpur|surat|vadodara|mysore|trivandrum|kozhikode)/.test(
+      value
+    )
+  ) {
+    return 'in';
+  }
+  if (/(united states|usa|u\.s\.|new york|california|texas|seattle|boston|chicago|austin|denver)/.test(value)) return 'us';
+  if (/(united kingdom|uk|london|manchester|birmingham|leeds)/.test(value)) return 'gb';
+  if (/(canada|toronto|vancouver|montreal)/.test(value)) return 'ca';
+  if (/(australia|sydney|melbourne|brisbane)/.test(value)) return 'au';
+  if (/(uae|dubai|abu dhabi|sharjah)/.test(value)) return 'ae';
+  if (/singapore/.test(value)) return 'sg';
+  if (/(germany|berlin|munich|hamburg)/.test(value)) return 'de';
+  return 'in';
+}
+
+/** JSearch's freshness filter is `date_posted`, not `date_range`. */
+function datePosted(value?: string | string[]): string {
+  const raw = (typeof value === 'string' ? value : '').toLowerCase();
+  if (raw === '24hours' || raw === 'day' || raw === 'today') return 'today';
+  if (raw === 'week') return 'week';
+  if (raw === 'month') return 'month';
+  return '';
+}
 
 /**
  * Free, key-less job sources used when JSearch is unavailable.
@@ -149,8 +187,9 @@ async function freeFallback(params: Params): Promise<{ jobs: NormalizedJob[]; so
 //
 // Uses LinkedIn's public "guest" job search endpoint, which serves the same
 // cards as the logged-out jobs page and needs no account, cookie or API key.
-// It returns no description text, so the description field explains that the
-// posting itself must be opened for the full text.
+// The cards carry no description, so the top hits get their posting page
+// fetched and the real text pulled out - without it the match score has nothing
+// to judge and sales postings win accounting searches on title words alone.
 
 const UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36';
@@ -182,6 +221,44 @@ const grab = (card: string, pattern: RegExp) => {
   return match ? clean(match[1]) : '';
 };
 
+/** Pull the real posting text so scoring is not done on a one-line summary. */
+async function linkedinDescription(id: string): Promise<string> {
+  if (!id) return '';
+  try {
+    const response = await fetch(`https://www.linkedin.com/jobs-guest/jobs/api/jobPosting/${id}`, {
+      headers: { 'User-Agent': UA, 'Accept-Language': 'en-US,en;q=0.9' },
+      signal: AbortSignal.timeout(2200),
+    });
+    if (!response.ok) return '';
+    const html = await response.text();
+    const match =
+      html.match(/show-more-less-html__markup[^>]*>([\s\S]*?)<\/div>/) ||
+      html.match(/description__text[^>]*>([\s\S]*?)<\/div>/);
+    return clean(match?.[1] || '').slice(0, 4000);
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * Fill in descriptions for the first few results, in parallel and with a hard
+ * per-request cap, so one slow posting cannot stall the whole search.
+ */
+async function enrichLinkedInDescriptions(jobs: BoardJob[]): Promise<void> {
+  const targets = jobs.slice(0, 5);
+  await Promise.allSettled(
+    targets.map(async (job) => {
+      const id = job.job_id.replace('linkedin-', '');
+      const description = await linkedinDescription(id);
+      if (description.length > 120) {
+        job.job_description = `${job.job_title} at ${job.employer_name} (${
+          job.job_city || 'location not listed'
+        }). ${description}`;
+      }
+    })
+  );
+}
+
 async function fromLinkedIn(
   query: string,
   location = 'India',
@@ -195,7 +272,7 @@ async function fromLinkedIn(
 
   const response = await fetch(url, {
     headers: { 'User-Agent': UA, 'Accept-Language': 'en-US,en;q=0.9' },
-    signal: AbortSignal.timeout(7000),
+    signal: AbortSignal.timeout(6000),
   });
   if (!response.ok) throw new Error(`linkedin ${response.status}`);
 
@@ -230,6 +307,8 @@ async function fromLinkedIn(
     .filter((job) => job.job_title && job.job_id);
 
   if (!jobs.length) throw new Error('linkedin empty');
+
+  await enrichLinkedInDescriptions(jobs);
   return jobs;
 }
 
@@ -287,6 +366,52 @@ function boardSearchLinks(query: string, location = 'India'): BoardLink[] {
 }
 
 
+async function searchJSearch(params: Params, dateRange?: string | string[]) {
+  if (!RAPIDAPI_KEY) return null;
+  try {
+    const search = new URLSearchParams({
+      // JSearch has no `location` parameter: the location belongs in the query
+      // and `country` selects the market.
+      query: params.location ? `${params.query} in ${params.location}` : params.query,
+      page: params.page || '1',
+      num_pages: params.num_pages || '1',
+      country: countryCode(params.location),
+      language: 'en',
+    });
+    const posted = datePosted(dateRange);
+    if (posted) search.append('date_posted', posted);
+    if (params.remote_jobs_only === 'true') search.append('remote_jobs_only', 'true');
+    if (params.employment_types) search.append('employment_types', params.employment_types);
+    if (params.job_required_skills) search.append('job_required_skills', params.job_required_skills);
+    if (params.job_title) search.append('job_titles', params.job_title);
+
+    const response = await fetch(`${JSEARCH_BASE_URL}?${search.toString()}`, {
+      method: 'GET',
+      headers: {
+        'X-RapidAPI-Key': RAPIDAPI_KEY,
+        'X-RapidAPI-Host': RAPIDAPI_HOST,
+      },
+      signal: AbortSignal.timeout(6000),
+    });
+
+    if (!response.ok) {
+      // Surface what upstream said (host matters: a 404 here means the
+      // endpoint or subscription is wrong) before falling back.
+      const errorText = await response.text().catch(() => '');
+      console.error('JSearch API error:', response.status, errorText, 'host:', RAPIDAPI_HOST);
+      return null;
+    }
+
+    const data: any = await response.json();
+    const jobs = Array.isArray(data?.data) ? data.data : [];
+    if (!jobs.length) return null;
+    return { jobs, request_information: data.request_information || {} };
+  } catch (error: any) {
+    console.error('JSearch proxy error:', error?.message || error);
+    return null;
+  }
+}
+
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   // CORS headers
   res.setHeader('Access-Control-Allow-Credentials', 'true');
@@ -343,49 +468,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   };
 
   // --- Primary: JSearch via RapidAPI (only when a key is configured) -------
-  if (RAPIDAPI_KEY) {
-    try {
-      const search = new URLSearchParams({
-        query: params.query,
-        page: params.page || '1',
-        num_pages: params.num_pages || '1',
-      });
-      if (typeof date_range === 'string' && date_range) search.append('date_range', date_range);
-      if (params.remote_jobs_only === 'true') search.append('remote_jobs_only', 'true');
-      if (params.employment_types) search.append('employment_types', params.employment_types);
-      if (typeof employer_names === 'string' && employer_names) search.append('employer_names', employer_names);
-      if (params.job_required_skills) search.append('job_required_skills', params.job_required_skills);
-      if (params.job_title) search.append('job_title', params.job_title);
-      if (params.company_name) search.append('company_name', params.company_name);
-      if (params.location) search.append('location', params.location);
-
-      const response = await fetch(`${JSEARCH_BASE_URL}?${search.toString()}`, {
-        method: 'GET',
-        headers: {
-          'X-RapidAPI-Key': RAPIDAPI_KEY,
-          'X-RapidAPI-Host': RAPIDAPI_HOST,
-        },
-        signal: AbortSignal.timeout(6000),
-      });
-
-      if (response.ok) {
-        const data: any = await response.json();
-        const jobs = Array.isArray(data?.data) ? data.data : [];
-        if (jobs.length) {
-          return res.status(200).json({
-            success: true,
-            data: { jobs, request_information: data.request_information || {}, search_links: boardSearchLinks(params.query, params.location || 'India') },
-          });
-        }
-      } else {
-        // Surface what upstream said (host matters: a 404 here means the
-        // endpoint or subscription is wrong) before falling back.
-        const errorText = await response.text().catch(() => '');
-        console.error('JSearch API error:', response.status, errorText, 'host:', RAPIDAPI_HOST);
-      }
-    } catch (error: any) {
-      console.error('JSearch proxy error:', error?.message || error);
-    }
+  const primary = await searchJSearch(params, date_range);
+  if (primary) {
+    return res.status(200).json({
+      success: true,
+      data: {
+        jobs: primary.jobs,
+        request_information: primary.request_information,
+        search_links: boardSearchLinks(params.query, params.location || 'India'),
+      },
+    });
   }
 
   // --- Fallback: free key-less sources so search never dead-ends ------------
