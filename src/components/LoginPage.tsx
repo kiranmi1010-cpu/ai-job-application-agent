@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { motion } from 'framer-motion';
-import { Mail, Lock, User, LogIn, UserPlus, Bot, AlertCircle } from 'lucide-react';
+import { Mail, Lock, User, LogIn, UserPlus, Compass, AlertCircle } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 
 export default function LoginPage() {
@@ -19,7 +19,6 @@ export default function LoginPage() {
 
     try {
       let success: boolean;
-      
       if (isSignUp) {
         if (!name.trim()) {
           setError('Please enter your name');
@@ -49,39 +48,41 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-purple-50 flex items-center justify-center p-4">
+    <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
       <motion.div
-        initial={{ opacity: 0, y: 20 }}
+        initial={{ opacity: 0, y: 16 }}
         animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.5 }}
+        transition={{ duration: 0.4 }}
         className="w-full max-w-md"
       >
-        {/* Logo and Title */}
-        <div className="text-center mb-8">
-          <div className="inline-flex items-center justify-center w-16 h-16 bg-gradient-to-br from-blue-500 to-purple-600 rounded-2xl mb-4 shadow-lg">
-            <Bot size={32} className="text-white" />
+        {/* Wordmark */}
+        <div className="mb-8">
+          <div className="flex items-center gap-3 mb-6">
+            <div className="w-9 h-9 bg-slate-900 rounded-lg flex items-center justify-center">
+              <Compass size={18} className="text-white" />
+            </div>
+            <span className="text-[11px] uppercase tracking-[0.16em] text-slate-400">Job search workspace</span>
           </div>
-          <h1 className="text-3xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
-            JobPilot AI
+          <h1 className="font-serif text-4xl leading-tight text-slate-900">
+            JobPilot
           </h1>
-          <p className="text-slate-600 mt-2">Your Intelligent Job Application Agent</p>
+          <p className="text-slate-600 mt-2 text-sm">
+            Resume-driven job matching, with every application left in your hands.
+          </p>
         </div>
 
-        {/* Login Card */}
-        <div className="bg-white rounded-2xl shadow-xl border border-slate-200 p-8">
-          <h2 className="text-2xl font-bold text-slate-900 mb-2">
-            {isSignUp ? 'Create Account' : 'Welcome Back'}
+        {/* Card */}
+        <div className="bg-white rounded-xl border border-slate-200 p-8">
+          <h2 className="text-xl font-semibold text-slate-900 mb-1">
+            {isSignUp ? 'Create an account' : 'Sign in'}
           </h2>
-          <p className="text-slate-600 mb-6">
-            {isSignUp 
-              ? 'Sign up to start your AI-powered job search' 
-              : 'Sign in to continue your job search journey'}
+          <p className="text-sm text-slate-500 mb-6">
+            {isSignUp ? 'Start with the resume you already have.' : 'Pick up where your search left off.'}
           </p>
 
-          {/* Error Message */}
           {error && (
             <motion.div
-              initial={{ opacity: 0, y: -10 }}
+              initial={{ opacity: 0, y: -8 }}
               animate={{ opacity: 1, y: 0 }}
               className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg flex items-center gap-2"
             >
@@ -91,118 +92,110 @@ export default function LoginPage() {
           )}
 
           <form onSubmit={handleSubmit} className="space-y-4">
-            {/* Name Field (Sign Up Only) */}
             {isSignUp && (
               <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1.5">
-                  Full Name
+                <label className="block text-xs font-medium uppercase tracking-wide text-slate-500 mb-1.5">
+                  Full name
                 </label>
                 <div className="relative">
-                  <User size={18} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                  <User size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
                   <input
                     type="text"
                     value={name}
                     onChange={(e) => setName(e.target.value)}
-                    placeholder="Kiran Prem"
-                    className="w-full pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all"
+                    placeholder="Your full name"
+                    className="w-full pl-9 pr-4 py-2.5 bg-white border border-slate-200 rounded-lg text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-900/5 transition-colors"
                     required
                   />
                 </div>
               </div>
             )}
 
-            {/* Email Field */}
             <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1.5">
-                Email Address
+              <label className="block text-xs font-medium uppercase tracking-wide text-slate-500 mb-1.5">
+                Email
               </label>
               <div className="relative">
-                <Mail size={18} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                <Mail size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
                 <input
                   type="email"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   placeholder="you@example.com"
-                  className="w-full pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all"
+                  className="w-full pl-9 pr-4 py-2.5 bg-white border border-slate-200 rounded-lg text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-900/5 transition-colors"
                   required
                 />
               </div>
             </div>
 
-            {/* Password Field */}
             <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1.5">
+              <label className="block text-xs font-medium uppercase tracking-wide text-slate-500 mb-1.5">
                 Password
               </label>
               <div className="relative">
-                <Lock size={18} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                <Lock size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
                 <input
                   type="password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   placeholder="••••••••"
-                  className="w-full pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all"
+                  className="w-full pl-9 pr-4 py-2.5 bg-white border border-slate-200 rounded-lg text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-900/5 transition-colors"
                   required
                 />
               </div>
             </div>
 
-            {/* Submit Button */}
             <button
               type="submit"
               disabled={loading}
-              className="w-full flex items-center justify-center gap-2 py-3 bg-gradient-to-r from-blue-600 to-purple-600 text-white rounded-xl font-medium text-sm hover:opacity-90 transition-opacity disabled:opacity-50 disabled:cursor-not-allowed"
+              className="w-full flex items-center justify-center gap-2 py-2.5 bg-slate-900 text-white rounded-lg font-medium text-sm hover:bg-slate-800 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {loading ? (
                 <>
                   <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                  {isSignUp ? 'Creating Account...' : 'Signing In...'}
+                  {isSignUp ? 'Creating account…' : 'Signing in…'}
                 </>
               ) : (
                 <>
-                  {isSignUp ? <UserPlus size={18} /> : <LogIn size={18} />}
-                  {isSignUp ? 'Create Account' : 'Sign In'}
+                  {isSignUp ? <UserPlus size={16} /> : <LogIn size={16} />}
+                  {isSignUp ? 'Create account' : 'Sign in'}
                 </>
               )}
             </button>
           </form>
 
-          {/* Toggle Sign Up / Login */}
           <div className="mt-6 text-center">
-            <p className="text-sm text-slate-600">
-              {isSignUp ? 'Already have an account?' : "Don't have an account?"}
+            <p className="text-sm text-slate-500">
+              {isSignUp ? 'Already have an account?' : 'No account yet?'}
               <button
                 onClick={() => {
                   setIsSignUp(!isSignUp);
                   setError('');
                 }}
-                className="ml-1 text-blue-600 font-medium hover:text-blue-700 transition-colors"
+                className="ml-1 text-slate-900 font-medium underline decoration-slate-300 underline-offset-4 hover:decoration-slate-900 transition-colors"
               >
-                {isSignUp ? 'Sign In' : 'Sign Up'}
+                {isSignUp ? 'Sign in' : 'Sign up'}
               </button>
             </p>
           </div>
 
-          {/* Demo Credentials */}
           {!isSignUp && (
-            <div className="mt-6 pt-6 border-t border-slate-200">
-              <p className="text-xs text-slate-500 text-center mb-3">Quick Demo Access</p>
+            <div className="mt-6 pt-6 border-t border-slate-100">
               <button
                 onClick={fillDemoCredentials}
-                className="w-full py-2 bg-slate-100 text-slate-700 rounded-lg text-xs font-medium hover:bg-slate-200 transition-colors"
+                className="w-full py-2 bg-slate-50 text-slate-700 border border-slate-200 rounded-lg text-xs font-medium hover:bg-slate-100 transition-colors"
               >
-                Use Demo Credentials
+                Use demo credentials
               </button>
-              <p className="text-xs text-slate-400 text-center mt-2">
-                Email: kiran@example.com | Password: demo123
+              <p className="text-[11px] text-slate-400 text-center mt-2">
+                kiran@example.com · demo123
               </p>
             </div>
           )}
         </div>
 
-        {/* Footer */}
-        <p className="text-center text-xs text-slate-500 mt-6">
-          Powered by Google Gemini AI • Secure Authentication
+        <p className="text-center text-[11px] text-slate-400 mt-6">
+          Letters are drafted from your resume. Nothing is submitted without you.
         </p>
       </motion.div>
     </div>

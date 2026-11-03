@@ -77,7 +77,6 @@ function AppContent() {
 
   const pendingApprovals = stats.approvals;
 
-  // Show login page if not authenticated
   if (!isAuthenticated) {
     return <LoginPage />;
   }
@@ -120,37 +119,37 @@ function AppContent() {
             >
               <Menu size={20} />
             </button>
-            <div className="hidden sm:flex items-center gap-2 px-3 py-2 bg-slate-100 rounded-xl">
-              <Search size={16} className="text-slate-400" />
+            <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg">
+              <Search size={15} className="text-slate-400" />
               <input
                 type="text"
-                placeholder="Search anything..."
-                className="bg-transparent text-sm text-slate-700 placeholder-slate-400 focus:outline-none w-48"
+                placeholder="Search jobs, companies…"
+                className="bg-transparent text-sm text-slate-700 placeholder-slate-400 focus:outline-none w-56"
               />
             </div>
           </div>
+
           <div className="flex items-center gap-3">
-            {/* Notifications */}
-            <button className="relative p-2 text-slate-600 hover:bg-slate-100 rounded-xl">
-              <Bell size={20} />
+            <button className="relative p-2 text-slate-500 hover:bg-slate-100 rounded-lg">
+              <Bell size={18} />
               {pendingApprovals > 0 && (
-                <span className="absolute top-1 right-1 w-4 h-4 bg-red-500 text-white text-[10px] rounded-full flex items-center justify-center">
+                <span className="absolute top-1 right-1 w-4 h-4 bg-purple-600 text-white text-[10px] rounded-full flex items-center justify-center font-medium">
                   {pendingApprovals}
                 </span>
               )}
             </button>
-            {/* Profile */}
+
             <div className="flex items-center gap-3 pl-3 border-l border-slate-200">
               <div className="hidden sm:block text-right">
                 <p className="text-sm font-medium text-slate-900">{user?.name || 'User'}</p>
-                <p className="text-xs text-slate-500">Pro Plan</p>
+                <p className="text-[11px] text-slate-400">Signed in</p>
               </div>
-              <div className="w-9 h-9 bg-gradient-to-br from-blue-500 to-purple-600 rounded-xl flex items-center justify-center text-white text-sm font-bold">
+              <div className="w-8 h-8 bg-slate-900 rounded-lg flex items-center justify-center text-white text-xs font-semibold">
                 {getUserInitial()}
               </div>
               <button
                 onClick={logout}
-                className="p-2 text-slate-600 hover:bg-slate-100 rounded-lg transition-colors"
+                className="p-2 text-slate-500 hover:bg-slate-100 rounded-lg transition-colors"
                 title="Logout"
               >
                 <LogOut size={18} />
@@ -164,10 +163,10 @@ function AppContent() {
           <AnimatePresence mode="wait">
             <motion.div
               key={currentView}
-              initial={{ opacity: 0, y: 10 }}
+              initial={{ opacity: 0, y: 8 }}
               animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -10 }}
-              transition={{ duration: 0.2 }}
+              exit={{ opacity: 0, y: -8 }}
+              transition={{ duration: 0.18 }}
             >
               {renderView()}
             </motion.div>
