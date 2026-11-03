@@ -10,6 +10,70 @@ const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || '');
 // matters inside a 30s function timeout.
 const MODEL = process.env.GEMINI_MODEL || 'gemini-flash-lite-latest';
 
+// OmniRoute (or any OpenAI-compatible gateway: OpenRouter, LiteLLM, OmniRoute)
+// pools several provider keys behind one endpoint, which is how the assistant
+// gets a bigger token budget. Set OMNIROUTE_BASE_URL to switch every action
+// over to it; Gemini stays as the fallback if the gateway is down.
+const OMNIROUTE_BASE_URL = (process.env.OMNIROUTE_BASE_URL || '').replace(/\/$/, '');
+const OMNIROUTE_API_KEY = process.env.OMNIROUTE_API_KEY || '';
+const OMNIROUTE_MODEL = process.env.OMNIROUTE_MODEL || 'gemini-2.0-flash';
+
+function activeProvider(): 'omniroute' | 'gemini' | 'none' {
+  if (OMNIROUTE_BASE_URL) return 'omniroute';
+  if (process.env.GEMINI_API_KEY) return 'gemini';
+  return 'none';
+}
+
+/**
+ * One OpenAI-compatible chat call. Works with OmniRoute's `/v1` endpoint, so any
+ * router the candidate hosts (localhost, a tunnel, or Render) can serve it.
+ */
+async function callOmniRoute(prompt: string): Promise<string> {
+  const response = await fetch(`${OMNIROUTE_BASE_URL}/chat/completions`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(OMNIROUTE_API_KEY ? { Authorization: `Bearer ${OMNIROUTE_API_KEY}` } : {}),
+    },
+    body: JSON.stringify({
+      model: OMNIROUTE_MODEL,
+      messages: [{ role: 'user', content: prompt }],
+      temperature: 0.2,
+    }),
+    signal: AbortSignal.timeout(25000),
+  });
+
+  if (!response.ok) {
+    const body = await response.text().catch(() => '');
+    throw new Error(`OmniRoute HTTP ${response.status}: ${body.slice(0, 200) || 'no body'}`);
+  }
+
+  const data: any = await response.json();
+  const content = data?.choices?.[0]?.message?.content;
+  if (!content) throw new Error('OmniRoute returned no content');
+  return String(content);
+}
+
+/**
+ * Every action is "prompt in, JSON text out", so it all goes through here and
+ * the provider becomes a deployment concern rather than a code path.
+ */
+async function generateText(prompt: string): Promise<{ text: string; provider: string }> {
+  if (OMNIROUTE_BASE_URL) {
+    try {
+      return { text: await callOmniRoute(prompt), provider: 'omniroute' };
+    } catch (error: any) {
+      console.error('OmniRoute failed, falling back to Gemini:', error?.message || error);
+    }
+  }
+
+  const model = genAI.getGenerativeModel({ model: MODEL });
+  const result = await model.generateContent(prompt);
+  return { text: result.response.text(), provider: 'gemini' };
+}
+
+const stripFences = (value: string) => value.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   // CORS headers
   res.setHeader('Access-Control-Allow-Credentials', 'true');
@@ -25,18 +89,29 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return;
   }
 
+  // A read-only status probe, so the provider can be checked from a browser
+  // without spending a token.
+  if (req.method === 'GET') {
+    return res.status(200).json({
+      ok: activeProvider() !== 'none',
+      provider: activeProvider(),
+      model: activeProvider() === 'omniroute' ? OMNIROUTE_MODEL : MODEL,
+      omniroute_configured: Boolean(OMNIROUTE_BASE_URL),
+      gemini_configured: Boolean(process.env.GEMINI_API_KEY),
+    });
+  }
+
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  // Check API key
-  if (!process.env.GEMINI_API_KEY) {
-    return res.status(500).json({ error: 'GEMINI_API_KEY not configured' });
+  // Either provider is enough: a self-hosted router needs no Gemini key.
+  if (activeProvider() === 'none') {
+    return res.status(500).json({ error: 'No AI provider configured: set GEMINI_API_KEY or OMNIROUTE_BASE_URL' });
   }
 
   try {
     const { action, data } = req.body;
-
     if (!action) {
       return res.status(400).json({ error: 'Action is required' });
     }
@@ -68,20 +143,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     return res.status(200).json(result);
   } catch (error: any) {
-    console.error('Gemini API error:', error);
-    return res.status(500).json({ 
+    console.error('AI provider error:', error);
+    return res.status(500).json({
       error: 'Failed to process request',
-      details: error.message 
+      details: error.message,
     });
   }
 }
 
-// Parse resume text using Gemini
+// Parse resume text using the configured provider
 async function parseResume(text: string) {
-  const model = genAI.getGenerativeModel({ model: MODEL });
-
   const prompt = `You are an expert resume parser. Analyze the following resume text and extract structured information. Return ONLY valid JSON with this exact structure:
-
 {
   "name": "Full name",
   "email": "email@example.com",
@@ -115,34 +187,25 @@ Rules:
 Resume text:
 ${text}`;
 
-  const result = await model.generateContent(prompt);
-  const response = result.response.text();
-  
-  // Clean up response - remove markdown code blocks if present
-  const cleanedResponse = response.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
-  
+  const { text: raw, provider } = await generateText(prompt);
+  const cleaned = stripFences(raw);
+
   try {
-    const parsed = JSON.parse(cleanedResponse);
-    const list = Array.isArray(parsed)
-      ? parsed
-      : Array.isArray(parsed?.matches)
-        ? parsed.matches
-        : Array.isArray(parsed?.results)
-          ? parsed.results
-          : null;
-    if (!list) {
-      return { success: false, error: 'Gemini did not return a list of matches', raw: cleanedResponse };
+    const parsed = JSON.parse(cleaned);
+    // This action returns a single object; the list checks that used to live
+    // here belonged to match-jobs and made every resume parse look like a
+    // failure, so uploads silently fell back to the offline parser.
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return { success: false, error: 'Resume parser did not return an object', raw: cleaned, provider };
     }
-    return { success: true, data: list };
+    return { success: true, data: parsed, provider };
   } catch (e) {
-    return { success: false, error: 'Failed to parse Gemini response', raw: cleanedResponse };
+    return { success: false, error: 'Failed to parse AI response', raw: cleaned, provider };
   }
 }
 
-// Match resume to jobs using Gemini
+// Match resume to jobs using the configured provider
 async function matchJobs(resume: any, jobs: any[]) {
-  const model = genAI.getGenerativeModel({ model: MODEL });
-
   const prompt = `You are an expert career advisor and job matching AI. Given a candidate's resume and a list of job openings, calculate a match score (0-100) for each job based on:
 - Skills alignment (40%)
 - Experience level match (25%)
@@ -171,23 +234,19 @@ ${jobs.map((j, i) => `[${i}] ID: ${j.externalId || j.id}, Title: ${j.title}, Com
 
 Return ONLY the JSON array, no markdown or explanations.`;
 
-  const result = await model.generateContent(prompt);
-  const response = result.response.text();
-  
-  const cleanedResponse = response.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
-  
+  const { text: raw, provider } = await generateText(prompt);
+  const cleaned = stripFences(raw);
+
   try {
-    const parsed = JSON.parse(cleanedResponse);
-    return { success: true, data: parsed };
+    const parsed = JSON.parse(cleaned);
+    return { success: true, data: parsed, provider };
   } catch (e) {
-    return { success: false, error: 'Failed to parse Gemini response', raw: cleanedResponse };
+    return { success: false, error: 'Failed to parse AI response', raw: cleaned, provider };
   }
 }
 
-// Generate cover letter using Gemini
+// Generate cover letter using the configured provider
 async function generateCoverLetter(resume: any, job: any) {
-  const model = genAI.getGenerativeModel({ model: MODEL });
-
   const prompt = `You are a professional career coach and expert at writing compelling job application emails. Write a personalized, professional cover letter email for the following application.
 
 Candidate:
@@ -222,23 +281,19 @@ Return ONLY valid JSON:
 
 No markdown, no explanations, just the JSON.`;
 
-  const result = await model.generateContent(prompt);
-  const response = result.response.text();
-  
-  const cleanedResponse = response.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
-  
+  const { text: raw, provider } = await generateText(prompt);
+  const cleaned = stripFences(raw);
+
   try {
-    const parsed = JSON.parse(cleanedResponse);
-    return { success: true, data: parsed };
+    const parsed = JSON.parse(cleaned);
+    return { success: true, data: parsed, provider };
   } catch (e) {
-    return { success: false, error: 'Failed to parse Gemini response', raw: cleanedResponse };
+    return { success: false, error: 'Failed to parse AI response', raw: cleaned, provider };
   }
 }
 
 // Generate follow-up email
 async function generateFollowUp(resume: any, job: any, daysSinceApplication: number = 7) {
-  const model = genAI.getGenerativeModel({ model: MODEL });
-
   const prompt = `Write a professional follow-up email for a job application.
 
 Candidate: ${resume.name} (${resume.email})
@@ -258,21 +313,18 @@ Return ONLY valid JSON:
   "body": "The email body"
 }`;
 
-  const result = await model.generateContent(prompt);
-  const response = result.response.text();
-  const cleanedResponse = response.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
-  
+  const { text: raw, provider } = await generateText(prompt);
+  const cleaned = stripFences(raw);
+
   try {
-    return { success: true, data: JSON.parse(cleanedResponse) };
+    return { success: true, data: JSON.parse(cleaned), provider };
   } catch (e) {
-    return { success: false, error: 'Failed to parse response', raw: cleanedResponse };
+    return { success: false, error: 'Failed to parse response', raw: cleaned, provider };
   }
 }
 
 // Generate thank you email
 async function generateThankYou(resume: any, job: any, interviewerName?: string) {
-  const model = genAI.getGenerativeModel({ model: MODEL });
-
   const prompt = `Write a professional thank you email after a job interview.
 
 Candidate: ${resume.name} (${resume.email})
@@ -292,21 +344,18 @@ Return ONLY valid JSON:
   "body": "The email body"
 }`;
 
-  const result = await model.generateContent(prompt);
-  const response = result.response.text();
-  const cleanedResponse = response.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
-  
+  const { text: raw, provider } = await generateText(prompt);
+  const cleaned = stripFences(raw);
+
   try {
-    return { success: true, data: JSON.parse(cleanedResponse) };
+    return { success: true, data: JSON.parse(cleaned), provider };
   } catch (e) {
-    return { success: false, error: 'Failed to parse response', raw: cleanedResponse };
+    return { success: false, error: 'Failed to parse response', raw: cleaned, provider };
   }
 }
 
 // Analyze job fit
 async function analyzeJobFit(resume: any, job: any) {
-  const model = genAI.getGenerativeModel({ model: MODEL });
-
   const prompt = `You are an expert career advisor. Analyze how well this candidate fits this job and provide actionable insights.
 
 Candidate:
@@ -331,13 +380,12 @@ Return ONLY valid JSON:
   "summary": "Brief analysis summary"
 }`;
 
-  const result = await model.generateContent(prompt);
-  const response = result.response.text();
-  const cleanedResponse = response.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
-  
+  const { text: raw, provider } = await generateText(prompt);
+  const cleaned = stripFences(raw);
+
   try {
-    return { success: true, data: JSON.parse(cleanedResponse) };
+    return { success: true, data: JSON.parse(cleaned), provider };
   } catch (e) {
-    return { success: false, error: 'Failed to parse response', raw: cleanedResponse };
+    return { success: false, error: 'Failed to parse response', raw: cleaned, provider };
   }
 }
