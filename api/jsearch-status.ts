@@ -7,15 +7,27 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
  *   /api/jsearch-status
  *
  * It reports the host being called, every endpoint path that was tried, the
- * upstream HTTP status, and the first part of the upstream body. A 404 here
- * means the key is not valid for that host (usually: subscribed to a different
- * jobs API), a 403 means the plan is not active, and a 401 means a bad key.
- * It never returns jobs, so it costs at most a handful of requests.
+ * upstream HTTP status, how long it took, the top-level keys of a successful
+ * body and how many jobs could be found in it. That distinguishes the three
+ * real failure modes: a retired path (404), an inactive plan (403), a bad key
+ * (401), or simply a slow endpoint (timeout).
  */
 
-export const config = { maxDuration: 20 };
+export const config = { maxDuration: 60 };
 
-const CANDIDATE_PATHS = ['/search', '/v1/search', '/search-v2', '/jobs/search', '/api/search'];
+const CANDIDATE_PATHS = ['/search-v2', '/search', '/v1/search', '/jobs/search', '/api/search'];
+const TIMEOUT_MS = 15000;
+
+/** Read the job array wherever the API happens to put it. */
+function extractJobArray(data: any): any[] {
+  if (Array.isArray(data)) return data;
+  if (Array.isArray(data?.data)) return data.data;
+  if (Array.isArray(data?.data?.jobs)) return data.data.jobs;
+  if (Array.isArray(data?.jobs)) return data.jobs;
+  if (Array.isArray(data?.results)) return data.results;
+  if (Array.isArray(data?.data?.results)) return data.data.results;
+  return [];
+}
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -44,6 +56,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   for (const path of paths) {
     const url = `https://${host}${path}?query=accountant&page=1&num_pages=1&country=in`;
+    const startedAt = Date.now();
     try {
       const response = await fetch(url, {
         method: 'GET',
@@ -51,23 +64,30 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           'X-RapidAPI-Key': key.trim(),
           'X-RapidAPI-Host': host,
         },
-        signal: AbortSignal.timeout(6000),
+        signal: AbortSignal.timeout(TIMEOUT_MS),
       });
       const body = await response.text().catch(() => '');
-      const entry: any = { path, status: response.status, ok: response.ok };
-      if (!response.ok) entry.upstream_message = body.slice(0, 250);
-      else entry.jobs_returned = (() => {
+      const elapsed_ms = Date.now() - startedAt;
+      const entry: any = { path, status: response.status, ok: response.ok, elapsed_ms };
+
+      if (!response.ok) {
+        entry.upstream_message = body.slice(0, 250);
+      } else {
         try {
           const parsed = JSON.parse(body);
-          return Array.isArray(parsed?.data) ? parsed.data.length : null;
+          entry.top_level_keys = parsed && typeof parsed === 'object' ? Object.keys(parsed) : [];
+          entry.jobs_found = extractJobArray(parsed).length;
+          entry.body_bytes = body.length;
         } catch {
-          return null;
+          entry.parse_error = true;
+          entry.sample = body.slice(0, 200);
         }
-      })();
+      }
+
       tried.push(entry);
       if (response.ok) break;
     } catch (error: any) {
-      tried.push({ path, error: error?.message || 'request failed' });
+      tried.push({ path, error: error?.message || 'request failed', elapsed_ms: Date.now() - startedAt });
     }
   }
 
@@ -81,8 +101,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     path_override: pathOverride || null,
     working_path: working ? working.path : null,
     verdict: working
-      ? `Key works on ${host}${working.path}.`
-      : 'No candidate path answered 200. Read upstream_message: 404 = key not valid for this host (subscribed to a different API), 403 = plan not active, 401 = bad key.',
+      ? `Key works on ${host}${working.path} in ${working.elapsed_ms}ms with ${working.jobs_found ?? 0} jobs.`
+      : 'No candidate path answered 200. Read upstream_message (404 = retired path, 403 = plan inactive, 401 = bad key) and any timeout entries.',
     tried,
   });
 }
