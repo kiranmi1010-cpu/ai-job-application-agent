@@ -2,8 +2,19 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
 
 // JSearch API configuration from environment variables
 const RAPIDAPI_KEY = process.env.RAPIDAPI_KEY || '';
-const RAPIDAPI_HOST = process.env.RAPIDAPI_HOST || 'jsearch.p.rapidapi.com';
-const JSEARCH_BASE_URL = `https://${RAPIDAPI_HOST}/search`;
+const RAPIDAPI_HOST = (process.env.RAPIDAPI_HOST || 'jsearch.p.rapidapi.com').trim();
+
+// JSearch moved search to `/search-v2`; the old `/search` now answers
+// 404 "Endpoint does not exist". The working path is remembered per warm
+// instance, and RAPIDAPI_PATH overrides it without a code change.
+const CONFIGURED_PATH = (process.env.RAPIDAPI_PATH || '').trim();
+const PATH_CANDIDATES = ['/search-v2', '/search', '/v1/search', '/jobs/search'];
+let workingPath: string | null = CONFIGURED_PATH || null;
+
+function pathsToTry(): string[] {
+  const ordered = workingPath ? [workingPath, ...PATH_CANDIDATES.filter((p) => p !== workingPath)] : PATH_CANDIDATES;
+  return ordered;
+}
 
 // Every search is for this city unless the candidate overrides it in Settings,
 // and remote roles are always included alongside the local ones.
@@ -375,9 +386,6 @@ async function fromLinkedIn(
 
   if (!jobs.length) throw new Error('linkedin empty');
 
-  // LinkedIn pads results with postings from other cities, and occasionally
-  // other countries. Keep the requested city plus anything explicitly remote,
-  // but fall back to the wider list if that would leave almost nothing.
   const wanted = jobs.filter((job) => job.job_is_remote || isInCity(job.job_city, location));
   const chosen = wanted.length >= 3 ? wanted : jobs;
 
@@ -482,57 +490,103 @@ function boardSearchLinks(query: string, location = DEFAULT_LOCATION): BoardLink
  * misconfigured key looks exactly like a key that was never set.
  */
 type JSearchResult =
-  | { ok: true; jobs: any[]; request_information: any }
-  | { ok: false; error: string };
+  | { ok: true; jobs: NormalizedJob[]; request_information: any; path: string }
+  | { ok: false; error: string; path?: string };
+
+/** `/search-v2` may nest or rename fields, so read the array wherever it is. */
+function extractJobArray(data: any): any[] {
+  if (Array.isArray(data)) return data;
+  if (Array.isArray(data?.data)) return data.data;
+  if (Array.isArray(data?.data?.jobs)) return data.data.jobs;
+  if (Array.isArray(data?.jobs)) return data.jobs;
+  if (Array.isArray(data?.results)) return data.results;
+  return [];
+}
+
+/** Accept v1 and v2 field names so the client always gets the same shape. */
+function normalizeJSearchJob(raw: any): NormalizedJob {
+  return {
+    job_id: String(
+      raw?.job_id ?? raw?.job_uid ?? raw?.id ?? raw?.uid ?? `jsearch-${Math.random().toString(36).slice(2, 10)}`
+    ),
+    employer_name: raw?.employer_name ?? raw?.company ?? raw?.company_name ?? 'Unknown',
+    employer_logo: raw?.employer_logo ?? raw?.company_logo ?? undefined,
+    job_publisher: raw?.job_publisher ?? raw?.publisher ?? 'JSearch',
+    job_title: raw?.job_title ?? raw?.title ?? raw?.position ?? 'Unknown Position',
+    job_description: String(raw?.job_description ?? raw?.description ?? ''),
+    job_min_salary: raw?.job_min_salary ?? undefined,
+    job_max_salary: raw?.job_max_salary ?? undefined,
+    job_currency: raw?.job_currency ?? undefined,
+    job_city: raw?.job_city ?? raw?.job_location ?? raw?.location ?? undefined,
+    job_country: raw?.job_country ?? undefined,
+    job_employment_type: raw?.job_employment_type ?? raw?.employment_type ?? undefined,
+    job_apply_link: raw?.job_apply_link ?? raw?.url ?? raw?.apply_link ?? undefined,
+    job_google_link: raw?.job_google_link ?? undefined,
+    job_is_remote: Boolean(raw?.job_is_remote ?? raw?.is_remote ?? false),
+    job_posted_at_datetime_utc:
+      raw?.job_posted_at_datetime_utc ?? raw?.job_posted_at ?? raw?.posted_at ?? undefined,
+  };
+}
 
 async function searchJSearch(params: Params, dateRange?: string | string[]): Promise<JSearchResult> {
   if (!RAPIDAPI_KEY) return { ok: false, error: 'RAPIDAPI_KEY is not set in this environment' };
   const location = resolveLocation(params.location);
-  try {
-    const search = new URLSearchParams({
-      // JSearch has no `location` parameter: the location belongs in the query
-      // and `country` selects the market.
-      query: `${params.query} in ${location}`,
-      page: params.page || '1',
-      num_pages: params.num_pages || '1',
-      country: countryCode(location),
-      language: 'en',
-    });
-    const posted = datePosted(dateRange);
-    if (posted) search.append('date_posted', posted);
-    if (params.remote_jobs_only === 'true') search.append('remote_jobs_only', 'true');
-    if (params.employment_types) search.append('employment_types', params.employment_types);
-    if (params.job_required_skills) search.append('job_required_skills', params.job_required_skills);
-    if (params.job_title) search.append('job_titles', params.job_title);
+  let lastError = '';
+  let lastPath = '';
 
-    const response = await fetch(`${JSEARCH_BASE_URL}?${search.toString()}`, {
-      method: 'GET',
-      headers: {
-        'X-RapidAPI-Key': RAPIDAPI_KEY.trim(),
-        'X-RapidAPI-Host': RAPIDAPI_HOST.trim(),
-      },
-      signal: AbortSignal.timeout(6000),
-    });
+  for (const path of pathsToTry()) {
+    lastPath = path;
+    try {
+      const search = new URLSearchParams({
+        // JSearch has no `location` parameter: the location belongs in the query
+        // and `country` selects the market.
+        query: `${params.query} in ${location}`,
+        page: params.page || '1',
+        num_pages: params.num_pages || '1',
+        country: countryCode(location),
+        language: 'en',
+      });
+      const posted = datePosted(dateRange);
+      if (posted) search.append('date_posted', posted);
+      if (params.remote_jobs_only === 'true') search.append('remote_jobs_only', 'true');
+      if (params.employment_types) search.append('employment_types', params.employment_types);
 
-    if (!response.ok) {
-      const errorText = await response.text().catch(() => '');
-      console.error('JSearch API error:', response.status, errorText, 'host:', RAPIDAPI_HOST);
-      return {
-        ok: false,
-        error: `HTTP ${response.status} from ${RAPIDAPI_HOST}: ${errorText.slice(0, 300) || 'no body'}`,
-      };
+      const response = await fetch(`https://${RAPIDAPI_HOST}${path}?${search.toString()}`, {
+        method: 'GET',
+        headers: {
+          'X-RapidAPI-Key': RAPIDAPI_KEY.trim(),
+          'X-RapidAPI-Host': RAPIDAPI_HOST,
+        },
+        signal: AbortSignal.timeout(8000),
+      });
+
+      if (response.status === 404) {
+        lastError = `HTTP 404 at ${path}: endpoint not available on ${RAPIDAPI_HOST}`;
+        continue; // try the next known path
+      }
+
+      if (!response.ok) {
+        const errorText = await response.text().catch(() => '');
+        console.error('JSearch API error:', response.status, errorText, 'path:', path);
+        lastError = `HTTP ${response.status} from ${RAPIDAPI_HOST}${path}: ${errorText.slice(0, 250) || 'no body'}`;
+        break;
+      }
+
+      const data: any = await response.json();
+      const jobs = extractJobArray(data).map(normalizeJSearchJob);
+      if (!jobs.length) {
+        lastError = `JSearch returned 0 jobs (path ${path}, country ${countryCode(location)})`;
+        break;
+      }
+
+      workingPath = path;
+      return { ok: true, jobs, request_information: data?.request_information || {}, path };
+    } catch (error: any) {
+      lastError = `Request failed on ${path}: ${error?.message || 'unknown error'}`;
     }
-
-    const data: any = await response.json();
-    const jobs = Array.isArray(data?.data) ? data.data : [];
-    if (!jobs.length) {
-      return { ok: false, error: `JSearch returned 0 jobs (host ${RAPIDAPI_HOST}, country ${countryCode(location)})` };
-    }
-    return { ok: true, jobs, request_information: data.request_information || {} };
-  } catch (error: any) {
-    console.error('JSearch proxy error:', error?.message || error);
-    return { ok: false, error: `Request failed: ${error?.message || 'unknown error'}` };
   }
+
+  return { ok: false, error: lastError || 'JSearch request failed', path: lastPath };
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -545,13 +599,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version'
   );
 
-  // Handle preflight
   if (req.method === 'OPTIONS') {
     res.status(200).end();
     return;
   }
 
-  // Only allow GET requests
   if (req.method !== 'GET') {
     return res.status(405).json({ error: 'Method not allowed' });
   }
@@ -601,6 +653,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         jobs: primary.jobs,
         request_information: primary.request_information,
         location: searchLocation,
+        source: `JSearch (${primary.path})`,
         search_links: boardSearchLinks(params.query, searchLocation),
       },
     });
