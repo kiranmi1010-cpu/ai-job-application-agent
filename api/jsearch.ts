@@ -423,8 +423,17 @@ function boardSearchLinks(query: string, location = 'India'): BoardLink[] {
 }
 
 
-async function searchJSearch(params: Params, dateRange?: string | string[]) {
-  if (!RAPIDAPI_KEY) return null;
+/**
+ * The upstream reason a JSearch call failed is returned rather than only
+ * logged, because Vercel's logs are not reachable from the app: without this a
+ * misconfigured key looks exactly like a key that was never set.
+ */
+type JSearchResult =
+  | { ok: true; jobs: any[]; request_information: any }
+  | { ok: false; error: string };
+
+async function searchJSearch(params: Params, dateRange?: string | string[]): Promise<JSearchResult> {
+  if (!RAPIDAPI_KEY) return { ok: false, error: 'RAPIDAPI_KEY is not set in this environment' };
   try {
     const search = new URLSearchParams({
       // JSearch has no `location` parameter: the location belongs in the query
@@ -445,27 +454,30 @@ async function searchJSearch(params: Params, dateRange?: string | string[]) {
     const response = await fetch(`${JSEARCH_BASE_URL}?${search.toString()}`, {
       method: 'GET',
       headers: {
-        'X-RapidAPI-Key': RAPIDAPI_KEY,
-        'X-RapidAPI-Host': RAPIDAPI_HOST,
+        'X-RapidAPI-Key': RAPIDAPI_KEY.trim(),
+        'X-RapidAPI-Host': RAPIDAPI_HOST.trim(),
       },
       signal: AbortSignal.timeout(6000),
     });
 
     if (!response.ok) {
-      // Surface what upstream said (host matters: a 404 here means the
-      // endpoint or subscription is wrong) before falling back.
       const errorText = await response.text().catch(() => '');
       console.error('JSearch API error:', response.status, errorText, 'host:', RAPIDAPI_HOST);
-      return null;
+      return {
+        ok: false,
+        error: `HTTP ${response.status} from ${RAPIDAPI_HOST}: ${errorText.slice(0, 300) || 'no body'}`,
+      };
     }
 
     const data: any = await response.json();
     const jobs = Array.isArray(data?.data) ? data.data : [];
-    if (!jobs.length) return null;
-    return { jobs, request_information: data.request_information || {} };
+    if (!jobs.length) {
+      return { ok: false, error: `JSearch returned 0 jobs (host ${RAPIDAPI_HOST}, country ${countryCode(params.location)})` };
+    }
+    return { ok: true, jobs, request_information: data.request_information || {} };
   } catch (error: any) {
     console.error('JSearch proxy error:', error?.message || error);
-    return null;
+    return { ok: false, error: `Request failed: ${error?.message || 'unknown error'}` };
   }
 }
 
@@ -526,7 +538,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   // --- Primary: JSearch via RapidAPI (only when a key is configured) -------
   const primary = await searchJSearch(params, date_range);
-  if (primary) {
+  if (primary.ok) {
     return res.status(200).json({
       success: true,
       data: {
@@ -547,7 +559,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         request_information: { status: 'fallback', source: fallback.source },
         search_links: boardSearchLinks(params.query, params.location || 'India'),
       },
-      ...(RAPIDAPI_KEY ? {} : { notice: 'RAPIDAPI_KEY not set - using free sources' }),
+      jsearch_error: primary.error,
     });
   }
 
@@ -556,5 +568,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     message: 'JSearch failed and free sources returned no results.',
     host: RAPIDAPI_HOST,
     jsearch_key_configured: Boolean(RAPIDAPI_KEY),
+    jsearch_error: primary.error,
   });
 }
