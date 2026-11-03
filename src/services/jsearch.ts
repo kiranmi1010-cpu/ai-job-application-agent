@@ -104,7 +104,6 @@ export async function searchJobs(params: SearchParams): Promise<JSearchResponse>
 
     const data: JSearchResponse = await response.json();
     return data;
-
   } catch (error) {
     console.error('Error searching jobs:', error);
     return {
@@ -120,9 +119,11 @@ export async function searchJobs(params: SearchParams): Promise<JSearchResponse>
  */
 export function formatSalary(min?: number, max?: number, currency?: string): string {
   if (!min && !max) return 'Not specified';
-  
-  const currencySymbol = currency === 'USD' ? '$' : currency || '$';
-  
+
+  const symbols: Record<string, string> = { USD: '$', INR: '\u20b9', EUR: '\u20ac', GBP: '\u00a3', AED: 'AED ', SGD: 'S$', CAD: 'C$', AUD: 'A$' };
+  const code = String(currency || '').toUpperCase();
+  const currencySymbol = symbols[code] ?? (code ? code + ' ' : '$');
+
   if (min && max) {
     return `${currencySymbol}${(min / 1000).toFixed(0)}K - ${currencySymbol}${(max / 1000).toFixed(0)}K`;
   } else if (min) {
@@ -130,7 +131,6 @@ export function formatSalary(min?: number, max?: number, currency?: string): str
   } else if (max) {
     return `Up to ${currencySymbol}${(max / 1000).toFixed(0)}K`;
   }
-  
   return 'Not specified';
 }
 
@@ -139,12 +139,10 @@ export function formatSalary(min?: number, max?: number, currency?: string): str
  */
 export function formatLocation(city?: string, state?: string, country?: string, isRemote?: boolean): string {
   if (isRemote) return 'Remote';
-  
   const parts = [];
   if (city) parts.push(city);
   if (state) parts.push(state);
   if (country) parts.push(country);
-  
   return parts.length > 0 ? parts.join(', ') : 'Location not specified';
 }
 
@@ -153,7 +151,7 @@ export function formatLocation(city?: string, state?: string, country?: string, 
  */
 export function formatPostedDate(timestamp?: number, datetimeUtc?: string): string {
   if (!timestamp && !datetimeUtc) return 'Recently';
-  
+
   let date: Date;
   if (timestamp) {
     date = new Date(timestamp * 1000); // Convert seconds to milliseconds
@@ -162,44 +160,59 @@ export function formatPostedDate(timestamp?: number, datetimeUtc?: string): stri
   } else {
     return 'Recently';
   }
-  
+
   const now = new Date();
   const diffMs = now.getTime() - date.getTime();
   const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
-  
+
   if (diffDays === 0) return 'Today';
   if (diffDays === 1) return 'Yesterday';
   if (diffDays < 7) return `${diffDays} days ago`;
   if (diffDays < 30) return `${Math.floor(diffDays / 7)} weeks ago`;
   if (diffDays < 365) return `${Math.floor(diffDays / 30)} months ago`;
-  
   return `${Math.floor(diffDays / 365)} years ago`;
 }
 
 /**
- * Extract skills from job description if not provided
+ * Skills worth showing as chips. Kept technology-flavoured on purpose: these are
+ * extracted from the posting text, and a posting that mentions "digital" or
+ * "interest" is not asking for Git or REST, so matching is word-bounded.
+ */
+const COMMON_SKILLS = [
+  'JavaScript', 'TypeScript', 'React', 'Angular', 'Vue', 'Node.js', 'Python', 'Java',
+  'C++', 'C#', 'Rust', 'Ruby', 'PHP', 'Swift', 'Kotlin', 'HTML', 'CSS',
+  'SQL', 'PostgreSQL', 'MySQL', 'MongoDB', 'Redis', 'AWS', 'Azure', 'GCP',
+  'Docker', 'Kubernetes', 'Git', 'CI/CD', 'REST', 'GraphQL', 'Agile', 'Scrum'
+];
+
+const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/**
+ * Extract skills from a job description when the board did not supply them.
+ *
+ * A plain `includes` check tagged every posting that mentioned "digital" with
+ * Git and every posting that mentioned "interest" with REST, which showed up as
+ * nonsense requirements on marketing jobs. Matching now requires the skill to
+ * be its own token, and very short skills are matched case-sensitively so the
+ * English word "go" is not read as the language Go.
  */
 export function extractSkillsFromDescription(description: string, requiredSkills?: string[]): string[] {
   if (requiredSkills && requiredSkills.length > 0) {
     return requiredSkills;
   }
-  
-  // Common tech skills to look for
-  const commonSkills = [
-    'JavaScript', 'TypeScript', 'React', 'Angular', 'Vue', 'Node.js', 'Python', 'Java',
-    'C++', 'C#', 'Go', 'Rust', 'Ruby', 'PHP', 'Swift', 'Kotlin', 'HTML', 'CSS',
-    'SQL', 'PostgreSQL', 'MySQL', 'MongoDB', 'Redis', 'AWS', 'Azure', 'GCP',
-    'Docker', 'Kubernetes', 'Git', 'CI/CD', 'REST', 'GraphQL', 'Agile', 'Scrum'
-  ];
-  
+
+  const text = String(description || '');
+  if (!text.trim()) return [];
+
   const foundSkills: string[] = [];
-  const descLower = description.toLowerCase();
-  
-  for (const skill of commonSkills) {
-    if (descLower.includes(skill.toLowerCase())) {
+  for (const skill of COMMON_SKILLS) {
+    const short = skill.length <= 3;
+    const haystack = short ? text : text.toLowerCase();
+    const needle = short ? skill : skill.toLowerCase();
+    const pattern = new RegExp(`(^|[^a-z0-9+#])${escapeRegExp(needle)}([^a-z0-9+#]|$)`, short ? '' : 'i');
+    if (pattern.test(haystack)) {
       foundSkills.push(skill);
     }
   }
-  
-  return foundSkills.slice(0, 10); // Limit to 10 skills
+  return foundSkills.slice(0, 10);
 }

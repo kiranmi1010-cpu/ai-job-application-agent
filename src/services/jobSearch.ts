@@ -197,14 +197,17 @@ function calculateMatchScoreLocal(resume: ParsedResumeData, job: any): number {
   }
   maxScore += 40;
 
-  // Title match (30% weight)
+  // Title match (30% weight). Capped at the weight itself: with five resume
+  // keywords a single title could match more of them than the divisor allowed
+  // and push the total over 100%.
   const resumeTitleKeywords = extractKeywordsFromExperience(resume);
   const jobTitleLower = job.title?.toLowerCase() || '';
   const titleMatches = resumeTitleKeywords.filter((keyword) =>
     jobTitleLower.includes(keyword.toLowerCase())
   );
   if (resumeTitleKeywords.length > 0) {
-    score += (titleMatches.length / Math.min(resumeTitleKeywords.length, 3)) * 30;
+    const titleRatio = Math.min(1, titleMatches.length / Math.min(resumeTitleKeywords.length, 3));
+    score += titleRatio * 30;
   }
   maxScore += 30;
 
@@ -223,7 +226,7 @@ function calculateMatchScoreLocal(resume: ParsedResumeData, job: any): number {
   if (jobLocation && !jobLocation.includes('location not specified')) score += 10;
   maxScore += 10;
 
-  return Math.round((score / maxScore) * 100);
+  return Math.min(100, Math.round((score / maxScore) * 100));
 }
 
 function extractKeywordsFromExperience(resume: ParsedResumeData): string[] {
@@ -240,7 +243,7 @@ function extractKeywordsFromExperience(resume: ParsedResumeData): string[] {
 function calculateExperienceYears(resume: ParsedResumeData): number {
   let totalYears = 0;
   (resume.experience || []).forEach((exp) => {
-    const durationMatch = String(exp?.duration || '').match(/(\d{4})\s*[-–—to]+\s*(\d{4}|Present|Current)/i);
+    const durationMatch = String(exp?.duration || '').match(/(\d{4})\s*[-\u2013\u2014to]+\s*(\d{4}|Present|Current)/i);
     if (durationMatch) {
       const startYear = parseInt(durationMatch[1]);
       const endYear =
@@ -265,23 +268,16 @@ function detectJobLevel(title: string): 'entry' | 'junior' | 'mid' | 'senior' {
  */
 export async function searchJobsFromResume(resume: ParsedResumeData, targets?: SearchTargets): Promise<JobListing[]> {
   const allJobs: JobListing[] = [];
-
-  // Create search queries from resume
   const searchQueries = generateSearchQueries(resume, targets);
 
-  // Search for each query (limit to 3 queries to stay within API limits)
   for (const query of searchQueries.slice(0, 3)) {
     const jobs = await searchJobsWithQuery(query, { numPages: 1, location: targets?.location || undefined });
     allJobs.push(...jobs);
   }
 
-  // Remove duplicates
   const uniqueJobs = removeDuplicateJobs(allJobs);
-
-  // Calculate match scores using Gemini
   const matchMap = await calculateMatchScoreWithGemini(resume, uniqueJobs);
 
-  // Apply match scores
   const jobsWithScores = uniqueJobs.map((job) => {
     const match = matchMap.get(job.externalId);
     return {
@@ -297,7 +293,6 @@ export async function searchJobsFromResume(resume: ParsedResumeData, targets?: S
   const sorted = jobsWithScores.sort((a, b) => b.matchScore - a.matchScore);
   const relevant = sorted.filter((job) => job.matchScore >= 35);
   const keep = relevant.length >= 3 ? relevant : sorted;
-
   return keep.slice(0, 25);
 }
 

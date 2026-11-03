@@ -147,6 +147,25 @@ export const dbHelpers = {
     await db.jobs.clear();
   },
 
+  /**
+   * A new search replaces the shortlist, but jobs you already approved or
+   * applied to must survive: their applications point at these rows.
+   */
+  async clearPendingJobs(): Promise<void> {
+    await db.jobs.where('status').anyOf('pending', 'rejected').delete();
+  },
+
+  async countJobsToday(): Promise<number> {
+    const start = new Date();
+    start.setHours(0, 0, 0, 0);
+    return await db.jobs.where('foundAt').aboveOrEqual(start).count();
+  },
+
+  /** The approval queue is applications still waiting for a decision. */
+  async countPendingApprovals(): Promise<number> {
+    return await db.applications.where('status').anyOf('draft', 'pending_approval').count();
+  },
+
   async updateJobMatch(
     id: number,
     patch: { matchScore?: number; matchReasons?: string[]; recommendation?: Job['recommendation'] }
