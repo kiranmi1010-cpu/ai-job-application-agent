@@ -245,20 +245,28 @@ const grab = (card: string, pattern: RegExp) => {
   return match ? clean(match[1]) : '';
 };
 
+// Descriptions do not change between searches, and the same posting often comes
+// back under two queries, so keep what was already fetched on warm invocations.
+const descriptionCache = new Map<string, string>();
+
 /** Pull the real posting text so scoring is not done on a one-line summary. */
 async function linkedinDescription(id: string): Promise<string> {
   if (!id) return '';
+  const cached = descriptionCache.get(id);
+  if (cached !== undefined) return cached;
   try {
     const response = await fetch(`https://www.linkedin.com/jobs-guest/jobs/api/jobPosting/${id}`, {
       headers: { 'User-Agent': UA, 'Accept-Language': 'en-US,en;q=0.9' },
-      signal: AbortSignal.timeout(1800),
+      signal: AbortSignal.timeout(3000),
     });
     if (!response.ok) return '';
     const html = await response.text();
     const match =
       html.match(/show-more-less-html__markup[^>]*>([\s\S]*?)<\/div>/) ||
       html.match(/description__text[^>]*>([\s\S]*?)<\/div>/);
-    return clean(match?.[1] || '').slice(0, 4000);
+    const text = clean(match?.[1] || '').slice(0, 4000);
+    if (text.length > 120 && descriptionCache.size < 200) descriptionCache.set(id, text);
+    return text;
   } catch {
     return '';
   }
