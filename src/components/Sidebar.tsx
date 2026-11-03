@@ -7,7 +7,7 @@ import {
   CheckCircle,
   Upload,
   Settings,
-  Bot,
+  Compass,
   X,
   Zap
 } from 'lucide-react';
@@ -23,21 +23,22 @@ interface SidebarProps {
 }
 
 const menuItems: { id: ViewType; label: string; icon: React.ReactNode }[] = [
-  { id: 'dashboard', label: 'Dashboard', icon: <LayoutDashboard size={20} /> },
-  { id: 'jobs', label: 'Job Scanner', icon: <Briefcase size={20} /> },
-  { id: 'applications', label: 'Applications', icon: <FileText size={20} /> },
-  { id: 'approvals', label: 'Approvals', icon: <CheckCircle size={20} /> },
-  { id: 'resume', label: 'My Resume', icon: <Upload size={20} /> },
-  { id: 'settings', label: 'Settings', icon: <Settings size={20} /> },
+  { id: 'dashboard', label: 'Dashboard', icon: <LayoutDashboard size={18} /> },
+  { id: 'jobs', label: 'Job Scanner', icon: <Briefcase size={18} /> },
+  { id: 'applications', label: 'Applications', icon: <FileText size={18} /> },
+  { id: 'approvals', label: 'Approvals', icon: <CheckCircle size={18} /> },
+  { id: 'resume', label: 'My Resume', icon: <Upload size={18} /> },
+  { id: 'settings', label: 'Settings', icon: <Settings size={18} /> },
 ];
 
+/** Paper sidebar: light surface, ink text, one solid accent for the active row. */
 export default function Sidebar({ currentView, setCurrentView, pendingApprovals, isMobileOpen, setIsMobileOpen, stats }: SidebarProps) {
   return (
     <>
       {/* Mobile overlay */}
       {isMobileOpen && (
         <div
-          className="fixed inset-0 bg-black/50 z-40 lg:hidden"
+          className="fixed inset-0 bg-slate-900/40 z-40 lg:hidden"
           onClick={() => setIsMobileOpen(false)}
         />
       )}
@@ -45,47 +46,47 @@ export default function Sidebar({ currentView, setCurrentView, pendingApprovals,
       {/* Sidebar */}
       <motion.aside
         initial={false}
-        className={`fixed lg:static inset-y-0 left-0 z-50 w-72 bg-gradient-to-b from-slate-900 via-slate-900 to-slate-800 text-white flex flex-col transform transition-transform duration-300 ease-in-out ${
+        className={`fixed lg:static inset-y-0 left-0 z-50 w-72 bg-white text-slate-900 flex flex-col border-r border-slate-200 transform transition-transform duration-300 ease-in-out ${
           isMobileOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'
         }`}
       >
-        {/* Logo */}
-        <div className="p-6 flex items-center justify-between">
+        {/* Wordmark */}
+        <div className="px-6 pt-6 pb-5 flex items-center justify-between border-b border-slate-100">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-purple-600 rounded-xl flex items-center justify-center">
-              <Bot size={22} className="text-white" />
+            <div className="w-9 h-9 bg-slate-900 rounded-lg flex items-center justify-center">
+              <Compass size={18} className="text-white" />
             </div>
             <div>
-              <h1 className="text-lg font-bold bg-gradient-to-r from-blue-400 to-purple-400 bg-clip-text text-transparent">
-                JobPilot AI
+              <h1 className="font-serif text-lg leading-tight tracking-tight text-slate-900">
+                JobPilot
               </h1>
-              <p className="text-xs text-slate-400">Smart Job Agent</p>
+              <p className="text-[11px] uppercase tracking-[0.14em] text-slate-400">Job search workspace</p>
             </div>
           </div>
           <button
-            className="lg:hidden text-slate-400 hover:text-white"
+            className="lg:hidden p-1 text-slate-400 hover:text-slate-700"
             onClick={() => setIsMobileOpen(false)}
           >
-            <X size={20} />
+            <X size={18} />
           </button>
         </div>
 
-        {/* AI Status - real counts, not placeholders */}
-        <div className="mx-4 mb-4 p-3 bg-slate-800/50 rounded-xl border border-slate-700/50">
-          <div className="flex items-center gap-2 mb-2">
-            <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse" />
-            <span className="text-xs text-green-400 font-medium">AI Agent Active</span>
+        {/* Real counts */}
+        <div className="mx-4 mt-4 p-3 bg-slate-50 rounded-lg border border-slate-200">
+          <div className="flex items-center gap-2 mb-1.5">
+            <div className="w-1.5 h-1.5 rounded-full bg-blue-600" />
+            <span className="text-[11px] uppercase tracking-[0.12em] text-slate-500">Resume search</span>
           </div>
-          <div className="flex items-center gap-2 mb-1">
-            <Zap size={12} className="text-yellow-400" />
-            <span className="text-xs text-slate-400">
-              {stats.skills} skill{stats.skills === 1 ? '' : 's'} → {stats.jobs} match{stats.jobs === 1 ? '' : 'es'} found
+          <div className="flex items-center gap-2">
+            <Zap size={12} className="text-purple-600" />
+            <span className="text-xs text-slate-600">
+              {stats.skills} skill{stats.skills === 1 ? '' : 's'} → {stats.jobs} match{stats.jobs === 1 ? '' : 'es'}
             </span>
           </div>
         </div>
 
         {/* Navigation */}
-        <nav className="flex-1 px-3 space-y-1">
+        <nav className="flex-1 px-3 mt-4 space-y-0.5">
           {menuItems.map((item) => (
             <button
               key={item.id}
@@ -93,16 +94,22 @@ export default function Sidebar({ currentView, setCurrentView, pendingApprovals,
                 setCurrentView(item.id);
                 setIsMobileOpen(false);
               }}
-              className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-all duration-200 ${
+              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-colors ${
                 currentView === item.id
-                  ? 'bg-gradient-to-r from-blue-600/20 to-purple-600/20 text-white border border-blue-500/30'
-                  : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
+                  ? 'bg-slate-900 text-white font-medium'
+                  : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
               }`}
             >
               {item.icon}
               <span>{item.label}</span>
               {item.id === 'approvals' && pendingApprovals > 0 && (
-                <span className="ml-auto bg-red-500 text-white text-xs px-2 py-0.5 rounded-full">
+                <span
+                  className={`ml-auto text-[11px] px-2 py-0.5 rounded-full font-medium ${
+                    currentView === item.id
+                      ? 'bg-white/15 text-white'
+                      : 'bg-purple-100 text-purple-700'
+                  }`}
+                >
                   {pendingApprovals}
                 </span>
               )}
@@ -110,14 +117,16 @@ export default function Sidebar({ currentView, setCurrentView, pendingApprovals,
           ))}
         </nav>
 
-        {/* Bottom section */}
-        <div className="p-4 mx-3 mb-3 bg-gradient-to-r from-blue-600/10 to-purple-600/10 rounded-xl border border-slate-700/50">
-          <p className="text-xs text-slate-400 mb-1">Auto-Matched Today</p>
-          <p className="text-2xl font-bold text-white">{stats.matchedToday}</p>
-          <p className="text-xs text-green-400 mt-1">↑ From resume analysis</p>
-          <p className="text-xs text-slate-500 mt-0.5">
-            {stats.interviews} interview{stats.interviews === 1 ? '' : 's'} scheduled
-          </p>
+        {/* Today */}
+        <div className="p-4 mx-3 mb-3 border-t border-slate-100">
+          <p className="text-[11px] uppercase tracking-[0.14em] text-slate-400 mb-1">Matched today</p>
+          <p className="font-serif text-3xl leading-none text-slate-900">{stats.matchedToday}</p>
+          <div className="mt-2 flex items-center justify-between text-[11px] text-slate-500">
+            <span>From your resume</span>
+            <span>
+              {stats.interviews} interview{stats.interviews === 1 ? '' : 's'}
+            </span>
+          </div>
         </div>
       </motion.aside>
     </>
