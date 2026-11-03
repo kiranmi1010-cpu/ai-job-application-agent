@@ -5,8 +5,10 @@ const RAPIDAPI_KEY = process.env.RAPIDAPI_KEY || '';
 const RAPIDAPI_HOST = process.env.RAPIDAPI_HOST || 'jsearch.p.rapidapi.com';
 const JSEARCH_BASE_URL = `https://${RAPIDAPI_HOST}/search`;
 
-// Every search is for this city unless the candidate overrides it in Settings.
+// Every search is for this city unless the candidate overrides it in Settings,
+// and remote roles are always included alongside the local ones.
 const DEFAULT_LOCATION = 'Bangalore';
+const MAX_REMOTE_JOBS = 8;
 
 // The LinkedIn card search can be retried once and is followed by a description
 // fetch, so give the function room to finish instead of being cut off mid-way.
@@ -45,8 +47,8 @@ type Params = {
 };
 
 /**
- * "India" is not a city and an empty value means "wherever", which used to let
- * foreign remote boards answer the search. Both resolve to Bangalore.
+ * "India" is not a city and an empty value means "wherever", so both resolve to
+ * the default city. Remote roles are added separately, not by widening the city.
  */
 function resolveLocation(location?: string): string {
   const value = (location || '').trim();
@@ -90,20 +92,9 @@ function datePosted(value?: string | string[]): string {
 }
 
 /**
- * A candidate asking for "accounts executive in Bangalore" wants a Bangalore
- * job. The remote-only boards can only answer with remote postings, usually
- * abroad, so they are the wrong place to look and must not be a fallback.
- */
-function isRemoteQuery(params: Params): boolean {
-  const value = `${params.query} ${params.location || ''}`.toLowerCase();
-  if (params.remote_jobs_only === 'true') return true;
-  return /\bremote\b|work from home|wfh|anywhere|worldwide/.test(value);
-}
-
-/**
- * Remote boards match loosely - "accounts" alone will happily return
- * "Engineering Manager - Bank Accounts". Require every word of the query in the
- * title so an unrelated posting cannot slip through.
+ * Boards match loosely - "accounts" alone will happily return "Engineering
+ * Manager - Bank Accounts". Require every word of the query in the title so an
+ * unrelated posting cannot slip through.
  */
 function matchesQueryTerms(title: string, query: string): boolean {
   const terms = query
@@ -116,11 +107,21 @@ function matchesQueryTerms(title: string, query: string): boolean {
   return terms.every((term) => haystack.includes(term));
 }
 
+const stripHtml = (value: string) => {
+  if (!value) return '';
+  return value
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&#39;/g, "'")
+    .replace(/&quot;/g, '"')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+};
+
 /**
- * Free, key-less job sources used when JSearch is unavailable.
- * Each returns normalised jobs, or throws so the next source is tried.
- * Remotive and Jobicy are remote-only and support a search term;
- * Arbeitnow has no search param, so we filter its feed locally.
+ * Remote job sources. Remotive and Jobicy are remote-only and support a search
+ * term; Arbeitnow carries a remote flag but needs local filtering.
  */
 async function fromRemotive(params: Params): Promise<NormalizedJob[]> {
   const url = new URL('https://remotive.com/api/remote-jobs');
@@ -137,8 +138,9 @@ async function fromRemotive(params: Params): Promise<NormalizedJob[]> {
     employer_logo: j.company_logo_url || j.company_logo || undefined,
     job_publisher: 'Remotive',
     job_title: j.title || '',
-    job_description: j.description || '',
+    job_description: stripHtml(j.description || ''),
     job_employment_type: j.job_type || undefined,
+    job_city: 'Remote',
     job_country: j.candidate_required_location || undefined,
     job_apply_link: j.url || undefined,
     job_is_remote: true,
@@ -164,10 +166,11 @@ async function fromJobicy(params: Params): Promise<NormalizedJob[]> {
     employer_logo: j.companyLogo || undefined,
     job_publisher: 'Jobicy',
     job_title: j.jobTitle || '',
-    job_description: j.jobDescription || j.jobExcerpt || '',
+    job_description: stripHtml(j.jobDescription || j.jobExcerpt || ''),
     job_min_salary: j.salaryMin || undefined,
     job_max_salary: j.salaryMax || undefined,
     job_currency: j.salaryCurrency || undefined,
+    job_city: 'Remote',
     job_country: j.candidateRequiredLocation || undefined,
     job_employment_type: j.jobType || undefined,
     job_apply_link: j.url || undefined,
@@ -194,43 +197,44 @@ async function fromArbeitnow(params: Params): Promise<NormalizedJob[]> {
     return terms.length === 0 || terms.some((t) => hay.includes(t));
   });
 
-  // Local source may not match the query - only return it if we actually found something
-  const picked = matches.length ? matches : [];
-  if (!picked.length) throw new Error('arbeitnow no match');
+  const picked = matches.filter((j) => j.remote);
+  if (!picked.length) throw new Error('arbeitnow no remote match');
   return picked.map((j) => ({
     job_id: `arbeitnow-${j.slug}`,
     employer_name: j.company_name || 'Unknown',
     job_publisher: 'Arbeitnow',
     job_title: j.title || '',
-    job_description: j.description || '',
+    job_description: stripHtml(j.description || ''),
     job_apply_link: j.url || undefined,
-    job_is_remote: !!j.remote,
+    job_is_remote: true,
+    job_city: 'Remote',
     job_country: j.location || undefined,
     job_employment_type: (j.job_types || []).join(', ') || undefined,
     job_posted_at_datetime_utc: j.created_at || undefined,
   }));
 }
 
-/** Try each usable free source in turn; returns null if all fail. */
-async function freeFallback(params: Params): Promise<{ jobs: NormalizedJob[]; source: string } | null> {
-  const sources: Array<[string, (p: Params) => Promise<NormalizedJob[]>]> = [
-    ['LinkedIn', (p) => fromLinkedInWithRetry(p.query, resolveLocation(p.location))],
-  ];
-  // Remote-only and foreign boards are only a sensible answer when the search
-  // itself asks for remote work. Offering them for "accounts executive in
-  // Bangalore" is how a full-stack developer job ends up in an accountant's list.
-  if (isRemoteQuery(params)) {
-    sources.push(['Remotive', fromRemotive], ['Jobicy', fromJobicy], ['Arbeitnow', fromArbeitnow]);
-  }
-  for (const [name, fn] of sources) {
-    try {
-      const jobs = await fn(params);
-      if (jobs.length) return { jobs, source: name };
-    } catch {
-      // try the next source
-    }
-  }
-  return null;
+/** Remote roles are wanted in every search, so this runs beside the city feed. */
+async function collectRemoteJobs(params: Params): Promise<NormalizedJob[]> {
+  const settled = await Promise.allSettled([fromRemotive(params), fromJobicy(params), fromArbeitnow(params)]);
+  const jobs: NormalizedJob[] = [];
+  settled.forEach((result) => {
+    if (result.status === 'fulfilled') jobs.push(...result.value);
+  });
+  return jobs.slice(0, MAX_REMOTE_JOBS);
+}
+
+/** City results first, then remote roles, without repeating a posting. */
+function mergeJobs(local: any[], remote: NormalizedJob[]): any[] {
+  const seen = new Set<string>();
+  const merged: any[] = [];
+  [...local, ...remote].forEach((job) => {
+    const key = `${String(job.job_title || '').toLowerCase()}|${String(job.employer_name || '').toLowerCase()}`;
+    if (!key.trim() || key === '|' || seen.has(key)) return;
+    seen.add(key);
+    merged.push(job);
+  });
+  return merged;
 }
 
 // LinkedIn job connector.
@@ -259,14 +263,7 @@ interface BoardJob {
   job_employment_type?: string;
 }
 
-const clean = (value: string) =>
-  value
-    .replace(/<[^>]+>/g, ' ')
-    .replace(/&amp;/g, '&')
-    .replace(/&#39;/g, "'")
-    .replace(/&quot;/g, '"')
-    .replace(/\s+/g, ' ')
-    .trim();
+const clean = (value: string) => stripHtml(value);
 
 const grab = (card: string, pattern: RegExp) => {
   const match = card.match(pattern);
@@ -358,6 +355,7 @@ async function fromLinkedIn(
       const place = grab(card, /job-search-card__location[^>]*>([\s\S]*?)<\/span>/);
       const link = grab(card, /href="(https:\/\/[^"]*linkedin\.com\/jobs\/view\/[^"]*)"/);
       const posted = grab(card, /datetime="([^"]+)"/);
+      const remote = /remote|work from home|anywhere/i.test(`${place} ${title}`);
 
       return {
         job_id: `linkedin-${id}`,
@@ -368,7 +366,7 @@ async function fromLinkedIn(
         job_apply_link: link || (id ? `https://www.linkedin.com/jobs/view/${id}` : ''),
         job_city: place || undefined,
         job_country: location,
-        job_is_remote: /remote/i.test(place),
+        job_is_remote: remote,
         job_employment_type: 'Full-time',
         ...(posted ? { job_posted_at_datetime_utc: posted } : {}),
       } as BoardJob;
@@ -377,11 +375,11 @@ async function fromLinkedIn(
 
   if (!jobs.length) throw new Error('linkedin empty');
 
-  // LinkedIn pads results with postings from other cities (and occasionally
-  // other countries and languages). Prefer the requested city, but keep the
-  // wider list if filtering would leave almost nothing.
-  const inCity = jobs.filter((job) => isInCity(job.job_city, location));
-  const chosen = inCity.length >= 3 ? inCity : jobs;
+  // LinkedIn pads results with postings from other cities, and occasionally
+  // other countries. Keep the requested city plus anything explicitly remote,
+  // but fall back to the wider list if that would leave almost nothing.
+  const wanted = jobs.filter((job) => job.job_is_remote || isInCity(job.job_city, location));
+  const chosen = wanted.length >= 3 ? wanted : jobs;
 
   await enrichLinkedInDescriptions(chosen);
   return chosen;
@@ -395,6 +393,33 @@ async function fromLinkedInWithRetry(query: string, location: string): Promise<B
     await new Promise((resolve) => setTimeout(resolve, 400));
     return fromLinkedIn(query, location);
   }
+}
+
+/** City feed plus remote roles, run together; returns null if both are empty. */
+async function freeFallback(
+  params: Params
+): Promise<{ jobs: NormalizedJob[]; source: string } | null> {
+  const location = resolveLocation(params.location);
+  const [cityResult, remoteJobs] = await Promise.all([
+    fromLinkedInWithRetry(params.query, location)
+      .then((jobs) => ({ ok: true, jobs: jobs as any[] }))
+      .catch(() => ({ ok: false, jobs: [] as any[] })),
+    collectRemoteJobs(params).catch(() => [] as NormalizedJob[]),
+  ]);
+
+  if (!cityResult.ok && remoteJobs.length === 0) return null;
+
+  const merged = mergeJobs(cityResult.jobs, remoteJobs);
+  if (!merged.length) return null;
+
+  const source =
+    cityResult.ok && remoteJobs.length > 0
+      ? `LinkedIn (${location}) + remote boards`
+      : cityResult.ok
+        ? `LinkedIn (${location})`
+        : 'remote boards';
+
+  return { jobs: merged, source };
 }
 
 
@@ -443,9 +468,9 @@ function boardSearchLinks(query: string, location = DEFAULT_LOCATION): BoardLink
       reason: 'requires a logged-in session',
     },
     {
-      board: 'LinkedIn',
-      url: `https://www.linkedin.com/jobs/search/?keywords=${q}&location=${l}`,
-      reason: 'search is fetched directly',
+      board: 'LinkedIn remote',
+      url: `https://www.linkedin.com/jobs/search/?keywords=${q}&location=${l}&f_WT=2`,
+      reason: 'remote filter on LinkedIn',
     },
   ];
 }
@@ -581,7 +606,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     });
   }
 
-  // --- Fallback: free key-less sources so search never dead-ends ------------
+  // --- Fallback: city feed plus remote roles so search never dead-ends -------
   const fallback = await freeFallback(params);
   if (fallback) {
     return res.status(200).json({
