@@ -5,7 +5,7 @@ const RAPIDAPI_KEY = process.env.RAPIDAPI_KEY || '';
 const RAPIDAPI_HOST = process.env.RAPIDAPI_HOST || 'jsearch.p.rapidapi.com';
 const JSEARCH_BASE_URL = `https://${RAPIDAPI_HOST}/search`;
 
-// The LinkedIn card search is followed by a description fetch for the top few
+// The LinkedIn card search is followed by a description fetch for the top two
 // hits, so give the function room to finish instead of being cut off mid-way.
 export const config = { maxDuration: 30 };
 
@@ -76,6 +76,22 @@ function datePosted(value?: string | string[]): string {
 }
 
 /**
+ * A remote-only board answers "accounts executive" with "Full-Stack Developer"
+ * because it matches on any word. Keep only postings whose title actually
+ * shares a term with what was asked for.
+ */
+function matchesQueryTerms(title: string, query: string): boolean {
+  const terms = query
+    .toLowerCase()
+    .split(/\s+/)
+    .map((term) => term.replace(/[^a-z0-9+#.-]/g, ''))
+    .filter((term) => term.length > 2);
+  if (!terms.length) return true;
+  const haystack = (title || '').toLowerCase();
+  return terms.some((term) => haystack.includes(term));
+}
+
+/**
  * Free, key-less job sources used when JSearch is unavailable.
  * Each returns normalised jobs, or throws so the next source is tried.
  * Remotive and Jobicy are remote-only and support a search term;
@@ -90,7 +106,7 @@ async function fromRemotive(params: Params): Promise<NormalizedJob[]> {
   const body: any = await res.json();
   const jobs: any[] = Array.isArray(body?.jobs) ? body.jobs : [];
   if (!jobs.length) throw new Error('remotive empty');
-  return jobs.map((j) => ({
+  const mapped = jobs.map((j) => ({
     job_id: `remotive-${j.id}`,
     employer_name: j.company_name || 'Unknown',
     employer_logo: j.company_logo_url || j.company_logo || undefined,
@@ -103,6 +119,9 @@ async function fromRemotive(params: Params): Promise<NormalizedJob[]> {
     job_is_remote: true,
     job_posted_at_datetime_utc: j.publication_date || undefined,
   }));
+  const relevant = mapped.filter((job) => matchesQueryTerms(job.job_title, params.query));
+  if (!relevant.length) throw new Error('remotive no match');
+  return relevant;
 }
 
 async function fromJobicy(params: Params): Promise<NormalizedJob[]> {
@@ -114,7 +133,7 @@ async function fromJobicy(params: Params): Promise<NormalizedJob[]> {
   const body: any = await res.json();
   const jobs: any[] = Array.isArray(body?.jobs) ? body.jobs : [];
   if (!jobs.length) throw new Error('jobicy empty');
-  return jobs.map((j) => ({
+  const mapped = jobs.map((j) => ({
     job_id: `jobicy-${j.id}`,
     employer_name: j.companyName || 'Unknown',
     employer_logo: j.companyLogo || undefined,
@@ -130,6 +149,9 @@ async function fromJobicy(params: Params): Promise<NormalizedJob[]> {
     job_is_remote: true,
     job_posted_at_datetime_utc: j.pubDate || undefined,
   }));
+  const relevant = mapped.filter((job) => matchesQueryTerms(job.job_title, params.query));
+  if (!relevant.length) throw new Error('jobicy no match');
+  return relevant;
 }
 
 async function fromArbeitnow(params: Params): Promise<NormalizedJob[]> {
@@ -190,6 +212,8 @@ async function freeFallback(params: Params): Promise<{ jobs: NormalizedJob[]; so
 // The cards carry no description, so the top hits get their posting page
 // fetched and the real text pulled out - without it the match score has nothing
 // to judge and sales postings win accounting searches on title words alone.
+// Only a couple are fetched: every extra request raises the chance of being
+// rate limited, and a throttle here costs the whole search its results.
 
 const UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36';
@@ -227,7 +251,7 @@ async function linkedinDescription(id: string): Promise<string> {
   try {
     const response = await fetch(`https://www.linkedin.com/jobs-guest/jobs/api/jobPosting/${id}`, {
       headers: { 'User-Agent': UA, 'Accept-Language': 'en-US,en;q=0.9' },
-      signal: AbortSignal.timeout(2200),
+      signal: AbortSignal.timeout(1800),
     });
     if (!response.ok) return '';
     const html = await response.text();
@@ -241,11 +265,11 @@ async function linkedinDescription(id: string): Promise<string> {
 }
 
 /**
- * Fill in descriptions for the first few results, in parallel and with a hard
- * per-request cap, so one slow posting cannot stall the whole search.
+ * Fill in descriptions for the first couple of results, in parallel and with a
+ * hard per-request cap, so one slow posting cannot stall the whole search.
  */
 async function enrichLinkedInDescriptions(jobs: BoardJob[]): Promise<void> {
-  const targets = jobs.slice(0, 5);
+  const targets = jobs.slice(0, 2);
   await Promise.allSettled(
     targets.map(async (job) => {
       const id = job.job_id.replace('linkedin-', '');
@@ -272,7 +296,7 @@ async function fromLinkedIn(
 
   const response = await fetch(url, {
     headers: { 'User-Agent': UA, 'Accept-Language': 'en-US,en;q=0.9' },
-    signal: AbortSignal.timeout(6000),
+    signal: AbortSignal.timeout(8000),
   });
   if (!response.ok) throw new Error(`linkedin ${response.status}`);
 
