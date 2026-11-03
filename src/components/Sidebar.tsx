@@ -19,6 +19,7 @@ interface SidebarProps {
   pendingApprovals: number;
   isMobileOpen: boolean;
   setIsMobileOpen: (open: boolean) => void;
+  stats: { skills: number; jobs: number; matchedToday: number; interviews: number };
 }
 
 const menuItems: { id: ViewType; label: string; icon: React.ReactNode }[] = [
@@ -30,7 +31,7 @@ const menuItems: { id: ViewType; label: string; icon: React.ReactNode }[] = [
   { id: 'settings', label: 'Settings', icon: <Settings size={20} /> },
 ];
 
-export default function Sidebar({ currentView, setCurrentView, pendingApprovals, isMobileOpen, setIsMobileOpen }: SidebarProps) {
+export default function Sidebar({ currentView, setCurrentView, pendingApprovals, isMobileOpen, setIsMobileOpen, stats }: SidebarProps) {
   return (
     <>
       {/* Mobile overlay */}
@@ -69,7 +70,7 @@ export default function Sidebar({ currentView, setCurrentView, pendingApprovals,
           </button>
         </div>
 
-        {/* AI Status */}
+        {/* AI Status - real counts, not placeholders */}
         <div className="mx-4 mb-4 p-3 bg-slate-800/50 rounded-xl border border-slate-700/50">
           <div className="flex items-center gap-2 mb-2">
             <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse" />
@@ -77,10 +78,9 @@ export default function Sidebar({ currentView, setCurrentView, pendingApprovals,
           </div>
           <div className="flex items-center gap-2 mb-1">
             <Zap size={12} className="text-yellow-400" />
-            <span className="text-xs text-slate-400">Resume-based search running</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <span className="text-xs text-slate-500">12 skills → 156 matches found</span>
+            <span className="text-xs text-slate-400">
+              {stats.skills} skill{stats.skills === 1 ? '' : 's'} → {stats.jobs} match{stats.jobs === 1 ? '' : 'es'} found
+            </span>
           </div>
         </div>
 
@@ -113,9 +113,11 @@ export default function Sidebar({ currentView, setCurrentView, pendingApprovals,
         {/* Bottom section */}
         <div className="p-4 mx-3 mb-3 bg-gradient-to-r from-blue-600/10 to-purple-600/10 rounded-xl border border-slate-700/50">
           <p className="text-xs text-slate-400 mb-1">Auto-Matched Today</p>
-          <p className="text-2xl font-bold text-white">24</p>
+          <p className="text-2xl font-bold text-white">{stats.matchedToday}</p>
           <p className="text-xs text-green-400 mt-1">↑ From resume analysis</p>
-          <p className="text-xs text-slate-500 mt-0.5">3 interviews scheduled</p>
+          <p className="text-xs text-slate-500 mt-0.5">
+            {stats.interviews} interview{stats.interviews === 1 ? '' : 's'} scheduled
+          </p>
         </div>
       </motion.aside>
     </>

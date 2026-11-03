@@ -71,8 +71,12 @@ export default function JobScanner() {
       setResume(parsedResume ? { parsedData: parsedResume } : null);
       setJobs(dbJobs as any);
 
-      // Jobs found before a resume existed have no score. Score them once now.
-      const unscored = parsedResume ? dbJobs.filter((job) => !job.matchScore) : [];
+      // Jobs found before a resume existed have no score. Score them once: a
+      // job that already carries reasons has been scored and must not be sent
+      // back to the AI on every page load.
+      const unscored = parsedResume
+        ? dbJobs.filter((job) => !job.matchScore && !(job.matchReasons && job.matchReasons.length))
+        : [];
       if (unscored.length > 0) {
         const scored = await scoreJobs(parsedResume, unscored);
         await Promise.all(
@@ -135,10 +139,10 @@ export default function JobScanner() {
     const queries = typed
       ? [typed]
       : roles.length > 0
-        ? roles.slice(0, 2)
-        : parsedResume
-          ? generateSearchQueries(parsedResume).slice(0, 3)
-          : [];
+      ? roles.slice(0, 2)
+      : parsedResume
+      ? generateSearchQueries(parsedResume).slice(0, 3)
+      : [];
 
     if (queries.length === 0) {
       setError('Tell me the role you want in the target roles box, or upload your resume.');
@@ -167,8 +171,19 @@ export default function JobScanner() {
 
       const scored = parsedResume ? await scoreJobs(parsedResume, apiJobs) : apiJobs;
 
-      await dbHelpers.clearJobs();
-      await dbHelpers.saveJobs(scored.map(job => ({
+      // Keep whatever the candidate is already acting on. Clearing every job
+      // also deleted the rows their applications point at, so a fresh search
+      // silently broke the Applications and Approvals pages.
+      const existing = await dbHelpers.getJobs();
+      const trackedIds = new Set(
+        existing
+          .filter((job) => job.status === 'approved' || job.status === 'applied' || job.status === 'interview')
+          .map((job) => job.externalId)
+      );
+      const fresh = scored.filter((job) => !trackedIds.has(job.externalId));
+
+      await dbHelpers.clearPendingJobs();
+      await dbHelpers.saveJobs(fresh.map(job => ({
         ...job,
         status: 'pending' as const,
         foundAt: new Date()
@@ -213,9 +228,14 @@ export default function JobScanner() {
     }
   };
 
+  // "Remote" used to be compared against job.type, which is the employment
+  // type ("Full-time"), so the Remote filter could never match anything.
   const filteredJobs = jobs.filter(job => {
-    const matchesFilter = filterType === 'all' || job.type === filterType;
-    return matchesFilter;
+    if (filterType === 'all') return true;
+    if (filterType === 'Remote') {
+      return Boolean((job as any).isRemote) || /remote|anywhere|work from home|wfh/i.test(String(job.location || ''));
+    }
+    return String(job.type || '').toLowerCase().includes(filterType.toLowerCase());
   });
 
   const aiMatchedJobs = [...jobs].sort((a, b) => b.matchScore - a.matchScore);
@@ -284,15 +304,15 @@ export default function JobScanner() {
           <p className="text-slate-500 mt-1">{targetRoles.trim() ? 'Searching for ' + targetRoles + ' - every job is scored against your resume' : 'Searching the roles found in your resume - no target roles needed'}</p>
           {resume?.parsedData ? (
             <div className="mt-2 flex flex-wrap items-center gap-2">
-              <span className="text-xs uppercase tracking-wide text-cyan-300/70">From your resume</span>
+              <span className="text-xs uppercase tracking-wide text-slate-500">From your resume</span>
               {(resume.parsedData.experience || []).map((exp: any) => exp?.title).filter(Boolean).slice(0, 3).map((title: string) => (
-                <span key={title} className="px-2 py-0.5 text-xs rounded-full bg-cyan-500/10 text-cyan-200 border border-cyan-500/30">{title}</span>
+                <span key={title} className="px-2 py-0.5 text-xs rounded-full bg-cyan-50 text-cyan-700 border border-cyan-200">{title}</span>
               ))}
               {(resume.parsedData.skills || []).slice(0, 8).map((skill: string) => (
-                <span key={skill} className="px-2 py-0.5 text-xs rounded-full bg-slate-700/60 text-slate-300">{skill}</span>
+                <span key={skill} className="px-2 py-0.5 text-xs rounded-full bg-slate-100 text-slate-600">{skill}</span>
               ))}
               {(!resume.parsedData.experience?.length && !resume.parsedData.skills?.length) ? (
-                <span className="text-xs text-amber-300">No titles or skills detected - re-upload your resume</span>
+                <span className="text-xs text-amber-700">No titles or skills detected - re-upload your resume</span>
               ) : null}
             </div>
           ) : null}
@@ -539,7 +559,6 @@ export default function JobScanner() {
                     </a>
                   </div>
                 )}
-
                 {job.status === 'approved' && (
                   <span className="px-3 py-1.5 bg-green-100 text-green-700 rounded-full text-xs font-medium">
                     ✓ Approved

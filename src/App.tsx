@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Menu, Bell, Search, LogOut } from 'lucide-react';
 import Sidebar from './components/Sidebar';
@@ -11,12 +11,22 @@ import Settings from './components/Settings';
 import LoginPage from './components/LoginPage';
 import { ViewType } from './types';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
+import { dbHelpers } from './db';
 
 function AppContent() {
   const { user, isAuthenticated, logout } = useAuth();
   const [currentView, setCurrentView] = useState<ViewType>('dashboard');
   const [isMobileOpen, setIsMobileOpen] = useState(false);
-  const pendingApprovals = 3;
+
+  // These were literal constants ("3 pending", "24 matched today"), so the
+  // badges stayed the same no matter what was actually in the database.
+  const [stats, setStats] = useState({
+    jobs: 0,
+    skills: 0,
+    matchedToday: 0,
+    interviews: 0,
+    approvals: 0,
+  });
 
   // The Dashboard/JobScanner buttons navigate by setting window.location.hash
   // ('#resume', '#jobs', ...), but the view lives in React state - nothing was
@@ -34,6 +44,38 @@ function AppContent() {
     window.addEventListener('hashchange', applyHash);
     return () => window.removeEventListener('hashchange', applyHash);
   }, []);
+
+  // Re-read on every view change so counts follow searches and approvals.
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadStats = async () => {
+      try {
+        const [counts, resume] = await Promise.all([dbHelpers.getStats(), dbHelpers.getResume()]);
+        const [matchedToday, approvals] = await Promise.all([
+          dbHelpers.countJobsToday(),
+          dbHelpers.countPendingApprovals(),
+        ]);
+        if (cancelled) return;
+        setStats({
+          jobs: counts.totalJobs,
+          skills: (resume?.parsedData?.skills || []).length,
+          matchedToday,
+          interviews: counts.interviewApplications,
+          approvals,
+        });
+      } catch (error) {
+        console.warn('Could not load sidebar stats:', error);
+      }
+    };
+
+    loadStats();
+    return () => {
+      cancelled = true;
+    };
+  }, [currentView]);
+
+  const pendingApprovals = stats.approvals;
 
   // Show login page if not authenticated
   if (!isAuthenticated) {
@@ -64,6 +106,7 @@ function AppContent() {
         pendingApprovals={pendingApprovals}
         isMobileOpen={isMobileOpen}
         setIsMobileOpen={setIsMobileOpen}
+        stats={stats}
       />
 
       {/* Main Content */}
@@ -86,7 +129,6 @@ function AppContent() {
               />
             </div>
           </div>
-
           <div className="flex items-center gap-3">
             {/* Notifications */}
             <button className="relative p-2 text-slate-600 hover:bg-slate-100 rounded-xl">
@@ -97,7 +139,6 @@ function AppContent() {
                 </span>
               )}
             </button>
-
             {/* Profile */}
             <div className="flex items-center gap-3 pl-3 border-l border-slate-200">
               <div className="hidden sm:block text-right">
