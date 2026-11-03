@@ -20,6 +20,7 @@ export interface Resume {
       institution: string;
       year: string;
     }>;
+    summary?: string;
   };
   uploadedAt: Date;
 }
@@ -113,6 +114,11 @@ export const dbHelpers = {
     await db.resumes.delete(id);
   },
 
+  /** Correcting the parsed name should not need a re-upload. */
+  async updateResumeParsedData(id: number, parsedData: Resume['parsedData']): Promise<void> {
+    await db.resumes.update(id, { parsedData });
+  },
+
   // Jobs
   async saveJobs(jobs: Omit<Job, 'id'>[]): Promise<number[]> {
     return await db.jobs.bulkAdd(jobs);
@@ -197,7 +203,7 @@ export const dbHelpers = {
     const submittedApplications = await db.applications.where('status').equals('submitted').count();
     const interviewApplications = await db.applications.where('status').equals('interview').count();
     const pendingApplications = await db.applications.where('status').equals('pending_approval').count();
-    
+
     return {
       totalJobs,
       totalApplications,
