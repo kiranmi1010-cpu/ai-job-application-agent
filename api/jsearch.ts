@@ -5,8 +5,8 @@ const RAPIDAPI_KEY = process.env.RAPIDAPI_KEY || '';
 const RAPIDAPI_HOST = process.env.RAPIDAPI_HOST || 'jsearch.p.rapidapi.com';
 const JSEARCH_BASE_URL = `https://${RAPIDAPI_HOST}/search`;
 
-// The LinkedIn card search is followed by a description fetch for the top two
-// hits, so give the function room to finish instead of being cut off mid-way.
+// The LinkedIn card search can be retried once and is followed by a description
+// fetch, so give the function room to finish instead of being cut off mid-way.
 export const config = { maxDuration: 30 };
 
 // Normalised shape the frontend expects (JSearchJob in src/services/jsearch.ts)
@@ -76,9 +76,21 @@ function datePosted(value?: string | string[]): string {
 }
 
 /**
- * A remote-only board answers "accounts executive" with "Full-Stack Developer"
- * because it matches on any word. Keep only postings whose title actually
- * shares a term with what was asked for.
+ * A candidate asking for "accounts executive in Pune" wants a Pune job. The
+ * remote-only boards can only answer with remote postings, usually abroad, so
+ * they are the wrong place to look and must not be used as a fallback.
+ */
+function isRemoteQuery(params: Params): boolean {
+  const value = `${params.query} ${params.location || ''}`.toLowerCase();
+  if (params.remote_jobs_only === 'true') return true;
+  if (/\bremote\b|work from home|wfh|anywhere|worldwide/.test(value)) return true;
+  return !params.location || /\banywhere\b/.test(value);
+}
+
+/**
+ * Remote boards match loosely - "accounts" alone will happily return
+ * "Engineering Manager - Bank Accounts". Require every word of the query in the
+ * title so an unrelated posting cannot slip through.
  */
 function matchesQueryTerms(title: string, query: string): boolean {
   const terms = query
@@ -88,7 +100,7 @@ function matchesQueryTerms(title: string, query: string): boolean {
     .filter((term) => term.length > 2);
   if (!terms.length) return true;
   const haystack = (title || '').toLowerCase();
-  return terms.some((term) => haystack.includes(term));
+  return terms.every((term) => haystack.includes(term));
 }
 
 /**
@@ -186,14 +198,17 @@ async function fromArbeitnow(params: Params): Promise<NormalizedJob[]> {
   }));
 }
 
-/** Try each free source in turn; returns null if all fail. */
+/** Try each usable free source in turn; returns null if all fail. */
 async function freeFallback(params: Params): Promise<{ jobs: NormalizedJob[]; source: string } | null> {
   const sources: Array<[string, (p: Params) => Promise<NormalizedJob[]>]> = [
-    ['LinkedIn', (p) => fromLinkedIn(p.query, p.location || 'India')],
-    ['Remotive', fromRemotive],
-    ['Jobicy', fromJobicy],
-    ['Arbeitnow', fromArbeitnow],
+    ['LinkedIn', (p) => fromLinkedInWithRetry(p.query, p.location || 'India')],
   ];
+  // Remote-only and foreign boards are only a sensible answer when no location
+  // was asked for. Offering them for "accounts executive in Pune" is how a
+  // full-stack developer job ends up in an accountant's list.
+  if (isRemoteQuery(params)) {
+    sources.push(['Remotive', fromRemotive], ['Jobicy', fromJobicy], ['Arbeitnow', fromArbeitnow]);
+  }
   for (const [name, fn] of sources) {
     try {
       const jobs = await fn(params);
@@ -304,7 +319,7 @@ async function fromLinkedIn(
 
   const response = await fetch(url, {
     headers: { 'User-Agent': UA, 'Accept-Language': 'en-US,en;q=0.9' },
-    signal: AbortSignal.timeout(8000),
+    signal: AbortSignal.timeout(7000),
   });
   if (!response.ok) throw new Error(`linkedin ${response.status}`);
 
@@ -342,6 +357,16 @@ async function fromLinkedIn(
 
   await enrichLinkedInDescriptions(jobs);
   return jobs;
+}
+
+/** LinkedIn throttles bursts, so one retry rides out a transient refusal. */
+async function fromLinkedInWithRetry(query: string, location: string): Promise<BoardJob[]> {
+  try {
+    return await fromLinkedIn(query, location);
+  } catch {
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    return fromLinkedIn(query, location);
+  }
 }
 
 
