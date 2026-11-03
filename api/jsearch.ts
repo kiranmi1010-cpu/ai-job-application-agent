@@ -5,6 +5,9 @@ const RAPIDAPI_KEY = process.env.RAPIDAPI_KEY || '';
 const RAPIDAPI_HOST = process.env.RAPIDAPI_HOST || 'jsearch.p.rapidapi.com';
 const JSEARCH_BASE_URL = `https://${RAPIDAPI_HOST}/search`;
 
+// Every search is for this city unless the candidate overrides it in Settings.
+const DEFAULT_LOCATION = 'Bangalore';
+
 // The LinkedIn card search can be retried once and is followed by a description
 // fetch, so give the function room to finish instead of being cut off mid-way.
 export const config = { maxDuration: 30 };
@@ -42,6 +45,17 @@ type Params = {
 };
 
 /**
+ * "India" is not a city and an empty value means "wherever", which used to let
+ * foreign remote boards answer the search. Both resolve to Bangalore.
+ */
+function resolveLocation(location?: string): string {
+  const value = (location || '').trim();
+  if (!value) return DEFAULT_LOCATION;
+  if (/^(india|in|anywhere|any)$/i.test(value)) return DEFAULT_LOCATION;
+  return value;
+}
+
+/**
  * JSearch filters by ISO country code and has no "location" parameter, so the
  * city has to be written into the query while the country picks the market.
  * Without this the API happily returns US postings for an Indian search.
@@ -50,7 +64,7 @@ function countryCode(location?: string): string {
   const value = (location || '').toLowerCase();
   if (!value) return 'in';
   if (
-    /(india|pune|mumbai|bangalore|bengaluru|delhi|noida|gurgaon|gurugram|hyderabad|chennai|kolkata|ahmedabad|jaipur|indore|kochi|coimbatore|chandigarh|lucknow|nagpur|surat|vadodara|mysore|trivandrum|kozhikode)/.test(
+    /(india|bangalore|bengaluru|pune|mumbai|delhi|noida|gurgaon|gurugram|hyderabad|chennai|kolkata|ahmedabad|jaipur|indore|kochi|coimbatore|chandigarh|lucknow|nagpur|surat|vadodara|mysore|trivandrum|kozhikode)/.test(
       value
     )
   ) {
@@ -76,15 +90,14 @@ function datePosted(value?: string | string[]): string {
 }
 
 /**
- * A candidate asking for "accounts executive in Pune" wants a Pune job. The
- * remote-only boards can only answer with remote postings, usually abroad, so
- * they are the wrong place to look and must not be used as a fallback.
+ * A candidate asking for "accounts executive in Bangalore" wants a Bangalore
+ * job. The remote-only boards can only answer with remote postings, usually
+ * abroad, so they are the wrong place to look and must not be a fallback.
  */
 function isRemoteQuery(params: Params): boolean {
   const value = `${params.query} ${params.location || ''}`.toLowerCase();
   if (params.remote_jobs_only === 'true') return true;
-  if (/\bremote\b|work from home|wfh|anywhere|worldwide/.test(value)) return true;
-  return !params.location || /\banywhere\b/.test(value);
+  return /\bremote\b|work from home|wfh|anywhere|worldwide/.test(value);
 }
 
 /**
@@ -201,11 +214,11 @@ async function fromArbeitnow(params: Params): Promise<NormalizedJob[]> {
 /** Try each usable free source in turn; returns null if all fail. */
 async function freeFallback(params: Params): Promise<{ jobs: NormalizedJob[]; source: string } | null> {
   const sources: Array<[string, (p: Params) => Promise<NormalizedJob[]>]> = [
-    ['LinkedIn', (p) => fromLinkedInWithRetry(p.query, p.location || 'India')],
+    ['LinkedIn', (p) => fromLinkedInWithRetry(p.query, resolveLocation(p.location))],
   ];
-  // Remote-only and foreign boards are only a sensible answer when no location
-  // was asked for. Offering them for "accounts executive in Pune" is how a
-  // full-stack developer job ends up in an accountant's list.
+  // Remote-only and foreign boards are only a sensible answer when the search
+  // itself asks for remote work. Offering them for "accounts executive in
+  // Bangalore" is how a full-stack developer job ends up in an accountant's list.
   if (isRemoteQuery(params)) {
     sources.push(['Remotive', fromRemotive], ['Jobicy', fromJobicy], ['Arbeitnow', fromArbeitnow]);
   }
@@ -306,9 +319,18 @@ async function enrichLinkedInDescriptions(jobs: BoardJob[]): Promise<void> {
   );
 }
 
+/** LinkedIn writes the city into the card, so its spelling varies a lot. */
+function isInCity(place: string | undefined, city: string): boolean {
+  const hay = `${place || ''}`.toLowerCase();
+  if (!hay) return false;
+  if (/bangalore|bengaluru/i.test(city)) return /bangalore|bengaluru/i.test(hay);
+  const token = city.toLowerCase().split(/[\s,]+/)[0];
+  return token.length > 2 && hay.includes(token);
+}
+
 async function fromLinkedIn(
   query: string,
-  location = 'India',
+  location = DEFAULT_LOCATION,
   start = 0,
 ): Promise<BoardJob[]> {
   const url =
@@ -355,8 +377,14 @@ async function fromLinkedIn(
 
   if (!jobs.length) throw new Error('linkedin empty');
 
-  await enrichLinkedInDescriptions(jobs);
-  return jobs;
+  // LinkedIn pads results with postings from other cities (and occasionally
+  // other countries and languages). Prefer the requested city, but keep the
+  // wider list if filtering would leave almost nothing.
+  const inCity = jobs.filter((job) => isInCity(job.job_city, location));
+  const chosen = inCity.length >= 3 ? inCity : jobs;
+
+  await enrichLinkedInDescriptions(chosen);
+  return chosen;
 }
 
 /** LinkedIn throttles bursts, so one retry rides out a transient refusal. */
@@ -390,13 +418,13 @@ const slug = (value: string) =>
     .trim()
     .replace(/\s+/g, '-');
 
-function boardSearchLinks(query: string, location = 'India'): BoardLink[] {
+function boardSearchLinks(query: string, location = DEFAULT_LOCATION): BoardLink[] {
   const q = encodeURIComponent(query);
   const l = encodeURIComponent(location);
   return [
     {
       board: 'Naukri',
-      url: `https://www.naukri.com/${slug(query)}-jobs`,
+      url: `https://www.naukri.com/${slug(query)}-jobs-in-${slug(location)}`,
       reason: 'search API requires a captcha',
     },
     {
@@ -434,14 +462,15 @@ type JSearchResult =
 
 async function searchJSearch(params: Params, dateRange?: string | string[]): Promise<JSearchResult> {
   if (!RAPIDAPI_KEY) return { ok: false, error: 'RAPIDAPI_KEY is not set in this environment' };
+  const location = resolveLocation(params.location);
   try {
     const search = new URLSearchParams({
       // JSearch has no `location` parameter: the location belongs in the query
       // and `country` selects the market.
-      query: params.location ? `${params.query} in ${params.location}` : params.query,
+      query: `${params.query} in ${location}`,
       page: params.page || '1',
       num_pages: params.num_pages || '1',
-      country: countryCode(params.location),
+      country: countryCode(location),
       language: 'en',
     });
     const posted = datePosted(dateRange);
@@ -472,7 +501,7 @@ async function searchJSearch(params: Params, dateRange?: string | string[]): Pro
     const data: any = await response.json();
     const jobs = Array.isArray(data?.data) ? data.data : [];
     if (!jobs.length) {
-      return { ok: false, error: `JSearch returned 0 jobs (host ${RAPIDAPI_HOST}, country ${countryCode(params.location)})` };
+      return { ok: false, error: `JSearch returned 0 jobs (host ${RAPIDAPI_HOST}, country ${countryCode(location)})` };
     }
     return { ok: true, jobs, request_information: data.request_information || {} };
   } catch (error: any) {
@@ -530,11 +559,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     num_pages: typeof num_pages === 'string' ? num_pages : '1',
     remote_jobs_only: typeof remote_jobs_only === 'string' ? remote_jobs_only : undefined,
     employment_types: typeof employment_types === 'string' ? employment_types : undefined,
-    location: typeof location === 'string' ? location : undefined,
+    location: typeof location === 'string' ? location : DEFAULT_LOCATION,
     job_title: typeof job_title === 'string' ? job_title : undefined,
     company_name: typeof company_name === 'string' ? company_name : undefined,
     job_required_skills: typeof job_required_skills === 'string' ? job_required_skills : undefined,
   };
+
+  const searchLocation = resolveLocation(params.location);
 
   // --- Primary: JSearch via RapidAPI (only when a key is configured) -------
   const primary = await searchJSearch(params, date_range);
@@ -544,7 +575,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       data: {
         jobs: primary.jobs,
         request_information: primary.request_information,
-        search_links: boardSearchLinks(params.query, params.location || 'India'),
+        location: searchLocation,
+        search_links: boardSearchLinks(params.query, searchLocation),
       },
     });
   }
@@ -557,7 +589,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       data: {
         jobs: fallback.jobs,
         request_information: { status: 'fallback', source: fallback.source },
-        search_links: boardSearchLinks(params.query, params.location || 'India'),
+        location: searchLocation,
+        search_links: boardSearchLinks(params.query, searchLocation),
       },
       jsearch_error: primary.error,
     });
