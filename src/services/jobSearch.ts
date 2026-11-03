@@ -104,6 +104,7 @@ export async function calculateMatchScoreWithGemini(
   jobs: any[]
 ): Promise<Map<string, JobMatchResult>> {
   const matchMap = new Map<string, JobMatchResult>();
+
   const keyOf = (job: any, index: number) =>
     String(job?.externalId ?? job?.id ?? job?.job_id ?? 'job-' + index);
 
@@ -124,6 +125,7 @@ export async function calculateMatchScoreWithGemini(
       jobId: keyOf(job, index),
       description: String(job.description || '').slice(0, 1200),
     }));
+
     const result = await matchJobsWithGemini(resume, sent);
 
     if (result.success && Array.isArray(result.data) && result.data.length > 0) {
@@ -163,6 +165,7 @@ export async function calculateMatchScoreWithGemini(
         const match = byId.get(key);
         matchMap.set(key, match && match.matchScore > 0 ? match : localResult(job, index));
       });
+
       return matchMap;
     }
   } catch (error) {
@@ -189,7 +192,6 @@ function calculateMatchScoreLocal(resume: ParsedResumeData, job: any): number {
 
   const skills = (resume.skills || []).map((skill) => String(skill || '').trim()).filter(Boolean);
   const matchedSkills = skills.filter((skill) => jobText.includes(skill.toLowerCase()));
-
   if (skills.length > 0) {
     score += Math.min(1, matchedSkills.length / Math.min(skills.length, 6)) * 40;
   }
@@ -198,78 +200,64 @@ function calculateMatchScoreLocal(resume: ParsedResumeData, job: any): number {
   // Title match (30% weight)
   const resumeTitleKeywords = extractKeywordsFromExperience(resume);
   const jobTitleLower = job.title?.toLowerCase() || '';
-  
-  const titleMatches = resumeTitleKeywords.filter(keyword => 
+  const titleMatches = resumeTitleKeywords.filter((keyword) =>
     jobTitleLower.includes(keyword.toLowerCase())
   );
-  
   if (resumeTitleKeywords.length > 0) {
     score += (titleMatches.length / Math.min(resumeTitleKeywords.length, 3)) * 30;
   }
   maxScore += 30;
 
-  // Experience level match (20% weight)
+  // Experience level (20% weight). Scored proportionally: a flat entry-level
+  // bonus used to hand every posting +15, which swamped the skills signal.
   const experienceYears = calculateExperienceYears(resume);
   const jobLevel = detectJobLevel(job.title || '');
-  
-  if (jobLevel === 'senior' && experienceYears >= 5) score += 20;
-  else if (jobLevel === 'mid' && experienceYears >= 3) score += 20;
-  else if (jobLevel === 'junior' && experienceYears >= 1) score += 20;
-  else if (jobLevel === 'entry') score += 15;
+  const requiredYears = jobLevel === 'senior' ? 5 : jobLevel === 'junior' ? 1 : 3;
+  score += Math.min(1, experienceYears / requiredYears) * 20;
   maxScore += 20;
 
-  // Location match (10% weight)
-  const jobLocation = (job.location || '').toLowerCase();
-  if (jobLocation.includes('remote') || job.isRemote) {
-    score += 10;
-  }
+  // Location (10% weight). A listed location counts; being remote is not by
+  // itself a better match, which used to hand every remote job +10 and push
+  // local postings down the list.
+  const jobLocation = String(job.location || '').toLowerCase();
+  if (jobLocation && !jobLocation.includes('location not specified')) score += 10;
   maxScore += 10;
 
   return Math.round((score / maxScore) * 100);
 }
 
-
 function extractKeywordsFromExperience(resume: ParsedResumeData): string[] {
   const keywords: string[] = [];
-  
-  resume.experience.forEach(exp => {
-    const titleWords = exp.title.split(' ').filter(w => w.length > 3);
+  (resume.experience || []).forEach((exp) => {
+    const titleWords = String(exp?.title || '')
+      .split(' ')
+      .filter((w) => w.length > 3);
     keywords.push(...titleWords);
   });
-  
   return [...new Set(keywords)].slice(0, 5);
 }
 
 function calculateExperienceYears(resume: ParsedResumeData): number {
   let totalYears = 0;
-  
-  resume.experience.forEach(exp => {
-    const durationMatch = exp.duration.match(/(\d{4})\s*[-–]\s*(\d{4}|Present|Current)/i);
+  (resume.experience || []).forEach((exp) => {
+    const durationMatch = String(exp?.duration || '').match(/(\d{4})\s*[-–—to]+\s*(\d{4}|Present|Current)/i);
     if (durationMatch) {
       const startYear = parseInt(durationMatch[1]);
-      const endYear = durationMatch[2].toLowerCase() === 'present' || durationMatch[2].toLowerCase() === 'current'
-        ? new Date().getFullYear()
-        : parseInt(durationMatch[2]);
-      totalYears += (endYear - startYear);
+      const endYear =
+        durationMatch[2].toLowerCase() === 'present' || durationMatch[2].toLowerCase() === 'current'
+          ? new Date().getFullYear()
+          : parseInt(durationMatch[2]);
+      totalYears += Math.max(0, endYear - startYear);
     }
   });
-  
   return totalYears;
 }
 
 function detectJobLevel(title: string): 'entry' | 'junior' | 'mid' | 'senior' {
   const titleLower = title.toLowerCase();
-  
-  if (titleLower.includes('senior') || titleLower.includes('lead') || titleLower.includes('staff') || titleLower.includes('principal')) {
-    return 'senior';
-  }
-  if (titleLower.includes('junior') || titleLower.includes('jr')) {
-    return 'junior';
-  }
-  if (titleLower.includes('mid') || titleLower.includes('ii') || titleLower.includes('2')) {
-    return 'mid';
-  }
-  return 'entry';
+  if (/(senior|sr\.?|lead|staff|principal|head of|manager)/.test(titleLower)) return 'senior';
+  if (/(junior|jr\.?|trainee|intern|fresher|associate|assistant)/.test(titleLower)) return 'junior';
+  return 'mid';
 }
 
 /**
@@ -277,39 +265,64 @@ function detectJobLevel(title: string): 'entry' | 'junior' | 'mid' | 'senior' {
  */
 export async function searchJobsFromResume(resume: ParsedResumeData, targets?: SearchTargets): Promise<JobListing[]> {
   const allJobs: JobListing[] = [];
-  
+
   // Create search queries from resume
   const searchQueries = generateSearchQueries(resume, targets);
-  
-  // Search for each query (limit to 2 queries to stay within API limits)
+
+  // Search for each query (limit to 3 queries to stay within API limits)
   for (const query of searchQueries.slice(0, 3)) {
     const jobs = await searchJobsWithQuery(query, { numPages: 1, location: targets?.location || undefined });
     allJobs.push(...jobs);
   }
-  
+
   // Remove duplicates
   const uniqueJobs = removeDuplicateJobs(allJobs);
-  
+
   // Calculate match scores using Gemini
   const matchMap = await calculateMatchScoreWithGemini(resume, uniqueJobs);
-  
+
   // Apply match scores
-  const jobsWithScores = uniqueJobs.map(job => {
+  const jobsWithScores = uniqueJobs.map((job) => {
     const match = matchMap.get(job.externalId);
     return {
       ...job,
       matchScore: match?.matchScore || 0,
       matchReasons: match?.reasons,
-      recommendation: match?.recommendation
+      recommendation: match?.recommendation,
     };
   });
-  
+
   // Sort by fit, then keep only what actually relates to this resume: if at
   // least three roles score above the relevance floor, the weak ones are noise.
   const sorted = jobsWithScores.sort((a, b) => b.matchScore - a.matchScore);
   const relevant = sorted.filter((job) => job.matchScore >= 35);
   const keep = relevant.length >= 3 ? relevant : sorted;
+
   return keep.slice(0, 25);
+}
+
+/**
+ * Skills that are tools or soft traits rather than a job: searching "PowerPoint"
+ * returns Presentation Designers, which is how a PowerPoint skill filled an
+ * accountant's results with design roles. They still count for match scoring,
+ * they just must not become a search query.
+ */
+const GENERIC_SKILL_TERMS = new Set([
+  'powerpoint', 'ms powerpoint', 'microsoft powerpoint', 'presentation', 'presentations',
+  'excel', 'ms excel', 'microsoft excel', 'advanced excel', 'spreadsheets',
+  'word', 'ms word', 'microsoft word', 'office', 'ms office', 'microsoft office',
+  'google sheets', 'google docs', 'data entry', 'documentation', 'reporting',
+  'communication', 'communication skills', 'leadership', 'teamwork', 'team management',
+  'problem solving', 'time management', 'multitasking', 'analytical skills',
+  'attention to detail', 'customer service', 'negotiation', 'administration',
+  'management', 'organizational skills', 'interpersonal skills', 'email',
+  'outlook', 'typing', 'hardworking', 'self motivated',
+]);
+
+function isSearchableSkill(skill: string): boolean {
+  const value = skill.toLowerCase().replace(/\s+/g, ' ').trim();
+  if (!value || value.length < 3) return false;
+  return !GENERIC_SKILL_TERMS.has(value);
 }
 
 export function generateSearchQueries(resume: ParsedResumeData, targets?: SearchTargets): string[] {
@@ -332,23 +345,27 @@ export function generateSearchQueries(resume: ParsedResumeData, targets?: Search
     .filter((title) => title.split(' ').length > 1);
   queries.push(...baseTitles);
 
-  // Bare skills, with no job family appended: "Tally" is as valid a search in
-  // accounting as "React" is in engineering. A skill already covered by a
-  // title query is skipped so the three query slots are not wasted.
-  (resume.skills || []).slice(0, 6).forEach((skill) => {
-    const clean = String(skill || '').trim();
-    if (!clean) return;
-    const covered = queries.some((query) => query.toLowerCase().includes(clean.toLowerCase()));
-    if (!covered) queries.push(clean);
-  });
+  // Domain skills only, with no job family appended: "Tally" is as valid a
+  // search in accounting as "React" is in engineering. Generic tools such as
+  // PowerPoint are skipped - they describe how the work is done, not what the
+  // job is - and a skill already covered by a title wastes a query slot.
+  const skillQueries = (resume.skills || [])
+    .map((skill) => String(skill || '').trim())
+    .filter(isSearchableSkill)
+    .filter((skill) => {
+      const lower = skill.toLowerCase();
+      return !queries.some((query) => query.toLowerCase().includes(lower));
+    });
+
+  queries.push(...skillQueries.slice(0, 2));
 
   const cleaned = queries.map((query) => query.replace(/\s+/g, ' ').trim()).filter(Boolean);
   return [...new Set(cleaned)];
 }
 
 function removeDuplicateJobs(jobs: JobListing[]): JobListing[] {
-  const seen = new Set();
-  return jobs.filter(job => {
+  const seen = new Set<string>();
+  return jobs.filter((job) => {
     const key = `${job.title}-${job.company}-${job.location}`;
     if (seen.has(key)) {
       return false;
