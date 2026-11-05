@@ -189,10 +189,14 @@ async function answerForm() {
     await ensureContentScript(currentTabId);
     const results = await chrome.scripting.executeScript({
       target: { tabId: currentTabId, allFrames: true },
-      func: () => (window.__jobpilotQuestions ? window.__jobpilotQuestions() : []),
+      func: () => (window.__jobpilotQuestions ? window.__jobpilotQuestions() : null),
     });
     questionFrames = results.map((r) => ({ frameId: r.frameId, questions: r.result || [] })).filter((f) => f.questions.length);
     const all = questionFrames.flatMap((f) => f.questions.map((q) => ({ ...q, frameId: f.frameId })));
+    if (!all.length && results.every((r) => r.result === null)) {
+      ui.qa.innerHTML = '<span class="muted">This tab still has the old version loaded. Press F5 to reload the page, then click Answer questions again.</span>';
+      return;
+    }
     if (!all.length) {
       ui.qa.innerHTML = '<span class="muted">No questions found on this page. Open the step of the application that shows the questions, then try again.</span>';
       return;
