@@ -18,6 +18,7 @@ import {
   Loader2,
   FileText
 } from 'lucide-react';
+import HudHero from './HudHero';
 import { dbHelpers } from '../db';
 import { useAuth } from '../contexts/AuthContext';
 
@@ -59,47 +60,15 @@ export default function Dashboard() {
 
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-        <div>
-          <h1 className="text-2xl sm:text-3xl font-bold text-slate-900">
-            Welcome back, {user?.name || 'User'} 👋
-          </h1>
-          <p className="text-slate-500 mt-1">
-            {hasResume 
-              ? 'Your AI agent is actively finding and matching jobs for you.'
-              : 'Upload your resume to get started with AI-powered job search.'}
-          </p>
-        </div>
-        {hasResume && (
-          <div className="flex items-center gap-2 px-4 py-2 bg-green-50 border border-green-200 rounded-full">
-            <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
-            <span className="text-sm text-green-700 font-medium">Agent Active</span>
-          </div>
-        )}
-      </div>
+      {/* Ring screen from the JobPilot console, with this app's live numbers */}
+      <HudHero />
 
-      {/* Get Started Banner (if no resume) */}
-      {!hasResume && !loading && (
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="bg-gradient-to-r from-blue-600 to-purple-600 rounded-2xl p-6 text-white"
-        >
-          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-            <div>
-              <h3 className="text-lg font-semibold">Get Started: Upload Your Resume</h3>
-              <p className="text-blue-100 text-sm mt-1">Our AI will automatically analyze your skills and find matching jobs.</p>
-            </div>
-            <button 
-              onClick={() => window.location.hash = '#resume'}
-              className="px-5 py-2.5 bg-white text-blue-600 rounded-xl font-medium text-sm hover:bg-blue-50 transition-colors whitespace-nowrap"
-            >
-              Upload Resume
-            </button>
-          </div>
-        </motion.div>
-      )}
+      <p className="text-sm text-slate-500 text-center -mt-2">
+        Welcome back, {user?.name || 'there'}.{' '}
+        {hasResume
+          ? 'Your agent is matching jobs to your resume.'
+          : 'Upload your resume to start the job search.'}
+      </p>
 
       {/* Stats Grid */}
       <motion.div
