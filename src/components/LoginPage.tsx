@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { motion } from 'framer-motion';
 import { Mail, Lock, User, LogIn, UserPlus, Compass, AlertCircle } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
+import { cloudEnabled } from '../services/cloudSync';
 
 export default function LoginPage() {
   const { login, signup } = useAuth();
@@ -35,8 +36,8 @@ export default function LoginPage() {
           setError('Invalid email or password');
         }
       }
-    } catch (err) {
-      setError('An error occurred. Please try again.');
+    } catch (err: any) {
+      setError(err?.message || 'An error occurred. Please try again.');
     } finally {
       setLoading(false);
     }
@@ -179,7 +180,7 @@ export default function LoginPage() {
             </p>
           </div>
 
-          {!isSignUp && (
+          {!isSignUp && !cloudEnabled && (
             <div className="mt-6 pt-6 border-t border-slate-100">
               <button
                 onClick={fillDemoCredentials}
@@ -195,7 +196,9 @@ export default function LoginPage() {
         </div>
 
         <p className="text-center text-[11px] text-slate-400 mt-6">
-          Letters are drafted from your resume. Nothing is submitted without you.
+          {cloudEnabled
+            ? 'Sign in with the same account on your laptop and phone to see the same jobs everywhere.'
+            : 'Letters are drafted from your resume. Nothing is submitted without you.'}
         </p>
       </motion.div>
     </div>

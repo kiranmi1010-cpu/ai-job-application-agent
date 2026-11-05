@@ -16,6 +16,7 @@ import {
   AlertCircle
 } from 'lucide-react';
 import { dbHelpers } from '../db';
+import SyncCard from './SyncCard';
 
 export default function Settings() {
   const [gmailConnected, setGmailConnected] = useState(false);
@@ -154,6 +155,8 @@ export default function Settings() {
           </motion.div>
         )}
       </AnimatePresence>
+
+      <SyncCard />
 
       {/* Connected Accounts */}
       <div className="bg-white rounded-2xl border border-slate-100 shadow-sm">

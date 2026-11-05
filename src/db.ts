@@ -144,7 +144,9 @@ export const dbHelpers = {
   },
 
   async clearJobs(): Promise<void> {
-    await db.jobs.clear();
+    // Delete row by row (not table.clear()) so cloud sync records each removal
+    // and the other device does not bring the old jobs back.
+    await db.jobs.toCollection().delete();
   },
 
   /**

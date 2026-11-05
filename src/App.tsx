@@ -12,11 +12,18 @@ import LoginPage from './components/LoginPage';
 import { ViewType } from './types';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { dbHelpers } from './db';
+import { onRemoteChange, onSyncState, SyncState, cloudEnabled } from './services/cloudSync';
 
 function AppContent() {
   const { user, isAuthenticated, logout } = useAuth();
   const [currentView, setCurrentView] = useState<ViewType>('dashboard');
   const [isMobileOpen, setIsMobileOpen] = useState(false);
+  // Bumped when another device's changes are synced in, so the open screen re-reads.
+  const [remoteVersion, setRemoteVersion] = useState(0);
+  const [syncState, setSyncState] = useState<SyncState>('off');
+
+  useEffect(() => onRemoteChange(() => setRemoteVersion((v) => v + 1)), []);
+  useEffect(() => onSyncState((next) => setSyncState(next)), []);
 
   // These were literal constants ("3 pending", "24 matched today"), so the
   // badges stayed the same no matter what was actually in the database.
@@ -73,7 +80,7 @@ function AppContent() {
     return () => {
       cancelled = true;
     };
-  }, [currentView]);
+  }, [currentView, remoteVersion]);
 
   const pendingApprovals = stats.approvals;
 
@@ -142,7 +149,15 @@ function AppContent() {
             <div className="flex items-center gap-3 pl-3 border-l border-slate-200">
               <div className="hidden sm:block text-right">
                 <p className="text-sm font-medium text-slate-900">{user?.name || 'User'}</p>
-                <p className="text-[11px] text-slate-400">Signed in</p>
+                <p className="text-[11px] text-slate-400">
+                  {!cloudEnabled
+                    ? 'This device only'
+                    : syncState === 'syncing'
+                      ? 'Syncing…'
+                      : syncState === 'error'
+                        ? 'Sync problem: see Settings'
+                        : 'Synced across devices'}
+                </p>
               </div>
               <div className="w-8 h-8 bg-slate-900 rounded-lg flex items-center justify-center text-white text-xs font-semibold">
                 {getUserInitial()}
@@ -162,7 +177,7 @@ function AppContent() {
         <main className="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8">
           <AnimatePresence mode="wait">
             <motion.div
-              key={currentView}
+              key={`${currentView}-${remoteVersion}`}
               initial={{ opacity: 0, y: 8 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -8 }}

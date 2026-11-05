@@ -13,13 +13,19 @@ fills the form. You press submit — nothing is submitted for you.
 3. Click **Load unpacked** and select this `extension` folder.
 4. Pin **JobPilot Assist** to the toolbar.
 
+## Where it works
+
+- **Job boards:** LinkedIn, Naukri, Indeed, Glassdoor, Wellfound, foundit, Instahyre, Cutshort, iimjobs, Internshala.
+- **Company careers pages:** Greenhouse, Lever, Ashby, Workday, SmartRecruiters, Workable, Freshteam, Keka, Darwinbox, Zoho Recruit (forms embedded in an iframe included).
+- **Any other site:** click the icon and it injects itself into that tab.
+
 ## Use
 
-1. Open any posting on LinkedIn, Naukri, Indeed, Glassdoor or Wellfound.
+1. Open a posting or an application form.
 2. Click the JobPilot Assist icon — it shows the title, company and location it read.
-3. Open **Your details** once and fill name, email, phone, skills, LinkedIn, then **Save details**.
+3. Open **Your details** once: name, email, phone, skills, LinkedIn, city, current company, website, and pick your resume file. Then **Save details**.
 4. **Draft cover letter** → Gemini (via your deployed JobPilot API) writes a tailored letter.
-5. **Fill application form** → fills name/email/phone/cover-letter fields on the page.
+5. **Fill application form** → fills first/last/full name, email, phone, LinkedIn, website, city, current company and the cover-letter box, and attaches your resume to the upload field. Salary, password and captcha fields are never touched.
 6. Review, then press the site's own submit button.
 
 ## What it deliberately does not do
@@ -42,7 +48,7 @@ is the part worth automating.
 
 | File | Role |
 |---|---|
-| `manifest.json` | Manifest V3, host permissions for the five boards and the JobPilot API |
+| `manifest.json` | Manifest V3; boards and common ATS hosts get the script automatically, other sites through `activeTab` |
 | `content.js` | Extracts the posting; fills fields on request |
 | `background.js` | Calls `/api/gemini` for the cover letter |
 | `popup.html` / `popup.js` | The panel you click |
