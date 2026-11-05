@@ -33,6 +33,9 @@ const ui = {
   resumeFile: el('resumeFile'),
   resumeName: el('resumeName'),
   saveProfile: el('saveProfileBtn'),
+  roles: el('roles'),
+  rank: el('rankBtn'),
+  ranked: el('ranked'),
 };
 
 let currentJob = null;
@@ -99,6 +102,74 @@ function analyseFit(job, profile) {
   const gaps = specific.filter((t) => !have.includes(t));
   const score = specific.length ? Math.round((have.length / specific.length) * 100) : null;
   return { have, gaps, score, hasSkills: mine.length > 0 };
+}
+
+const DEFAULT_ROLES = "strategy, strategic planning, business planning, founder's office, market research, business analyst, consulting, marketing";
+
+// Score one listed job: how well its title matches the roles you want (most of
+// the weight), plus how many of your skills its card text mentions.
+function scoreListing(job, profile) {
+  const roles = String(profile.roles || DEFAULT_ROLES).split(/[,;\n]/).map(norm).filter(Boolean);
+  const skills = String(profile.skills || '').split(/[,;\n]/).map(norm).filter(Boolean);
+  const title = norm(job.title);
+  const body = norm(job.snippet);
+  let roleScore = 0;
+  for (const role of roles) {
+    if (hasTerm(title, role)) roleScore = Math.max(roleScore, 1);
+    else {
+      const words = role.split(' ').filter((w) => w.length > 3);
+      const hit = words.filter((w) => title.includes(w)).length;
+      if (words.length) roleScore = Math.max(roleScore, (hit / words.length) * 0.7);
+    }
+  }
+  const skillHits = skills.filter((s) => hasTerm(body, s)).length;
+  const skillScore = skills.length ? Math.min(1, skillHits / Math.min(4, skills.length)) : 0;
+  const senior = /\b(head|director|vp|vice president|chief|principal|senior manager|lead)\b/i.test(job.title) ? 0.85 : 1;
+  return Math.round((roleScore * 0.7 + skillScore * 0.3) * 100 * senior);
+}
+
+async function rankPage() {
+  if (!currentTabId) {
+    const tab = await getActiveTab();
+    currentTabId = tab?.id;
+  }
+  ui.rank.disabled = true;
+  ui.ranked.innerHTML = '<span class="muted">Reading the jobs on this page…</span>';
+  try {
+    await ensureContentScript(currentTabId);
+    const results = await chrome.scripting.executeScript({
+      target: { tabId: currentTabId, allFrames: false },
+      func: () => (window.__jobpilotList ? window.__jobpilotList() : []),
+    });
+    const jobs = results?.[0]?.result || [];
+    if (!jobs.length) {
+      ui.ranked.innerHTML =
+        '<span class="muted">No job list found here. Open a search results page (e.g. search "strategy analyst Bengaluru" on Indeed, LinkedIn or Naukri), scroll down a little, then try again.</span>';
+      return;
+    }
+    const { profile = {} } = await chrome.storage.local.get('profile');
+    const ranked = jobs
+      .map((job) => ({ ...job, score: scoreListing(job, profile) }))
+      .sort((a, b) => b.score - a.score);
+    const color = (s) => (s >= 60 ? '#059669' : s >= 35 ? '#7c3aed' : '#94a3b8');
+    ui.ranked.innerHTML = ranked
+      .map(
+        (job, i) => `<button class="rjob" data-i="${i}">
+          <span class="score" style="background:${color(job.score)}">${job.score}%</span>
+          <span><b>${job.title.replace(/[<>&]/g, '')}</b><small>${[job.company, job.salary].filter(Boolean).join(' · ').replace(/[<>&]/g, '')}</small></span>
+        </button>`
+      )
+      .join('');
+    ui.ranked.querySelectorAll('.rjob').forEach((btn) =>
+      btn.addEventListener('click', () => chrome.tabs.create({ url: ranked[Number(btn.dataset.i)].url }))
+    );
+    const good = ranked.filter((j) => j.score >= 60).length;
+    setStatus(`${jobs.length} jobs found on this page · ${good} strong match${good === 1 ? '' : 'es'}. Click one to open it.`, 'ok');
+  } catch (error) {
+    ui.ranked.innerHTML = '<span class="muted">Could not read this page. Reload it and try again.</span>';
+  } finally {
+    ui.rank.disabled = false;
+  }
 }
 
 const chip = (label, cls) => `<span class="chip ${cls}">${label.replace(/[<>&]/g, '')}</span>`;
@@ -231,6 +302,7 @@ async function loadProfile() {
   ui.phone.value = profile.phone || '';
   ui.skills.value = profile.skills || '';
   ui.linkedin.value = profile.linkedin || '';
+  ui.roles.value = profile.roles || '';
   ui.city.value = profile.city || '';
   ui.company.value = profile.company || '';
   ui.portfolio.value = profile.portfolio || '';
@@ -244,6 +316,7 @@ async function saveProfile() {
     email: ui.email.value.trim(),
     phone: ui.phone.value.trim(),
     skills: ui.skills.value.trim(),
+    roles: ui.roles.value.trim(),
     linkedin: ui.linkedin.value.trim(),
     city: ui.city.value.trim(),
     company: ui.company.value.trim(),
@@ -259,6 +332,7 @@ ui.rescan.addEventListener('click', readPage);
 ui.copy.addEventListener('click', copyLetter);
 ui.fill.addEventListener('click', fillForm);
 ui.saveProfile.addEventListener('click', saveProfile);
+ui.rank.addEventListener('click', rankPage);
 ui.resumeFile.addEventListener('change', () => {
   const file = ui.resumeFile.files && ui.resumeFile.files[0];
   if (!file) return;

@@ -198,6 +198,65 @@ function extractJob() {
   };
 }
 
+// --- every job listed on the page -------------------------------------------
+//
+// On a search results page or feed (Indeed, LinkedIn, Naukri, foundit, ...)
+// collect each job card you can see, so the popup can rank them against you.
+
+const CARD_SELECTORS = [
+  '.job_seen_beacon', '[data-jk]', '.jobsearch-ResultsList > li', // Indeed
+  'li[data-occludable-job-id]', '.job-card-container', '.jobs-search-results__list-item', '.base-card', // LinkedIn
+  '.srp-jobtuple-wrapper', 'article.jobTuple', '.cust-job-tuple', // Naukri
+  '[data-test="jobListing"]', 'li.react-job-listing', // Glassdoor
+  '.srpResultCardContainer', '.cardContainer', // foundit
+  '[class*="job-card" i]', '[class*="jobCard" i]', '[class*="JobCard" i]',
+];
+const JOB_LINK = /\/(viewjob|rc\/clk|pagead\/clk|jobs\/view|job-listings|job-detail|jobs?\/\d|careers?\/|job\/|position|opening)/i;
+
+function listJobs() {
+  const seen = new Set();
+  const out = [];
+  const push = (card, linkEl) => {
+    if (!card || !visible(card)) return;
+    const link = linkEl || card.querySelector('a[href]');
+    const titleEl =
+      card.querySelector('h2 a, h3 a, a.jcs-JobTitle, [class*="title" i] a, a[class*="title" i], h2, h3, [class*="title" i]') || link;
+    const title = text(titleEl).replace(/\s*-\s*job post$/i, '').replace(/^new\s+/i, '');
+    if (!goodTitle(title) || title.length > 140) return;
+    const href = link ? new URL(link.getAttribute('href'), location.href).href : location.href;
+    const key = title + '|' + href.split('?')[0];
+    if (seen.has(key)) return;
+    seen.add(key);
+    const lines = (card.innerText || '').split('\n').map((l) => l.trim()).filter(Boolean);
+    const at = lines.findIndex((l) => l.includes(title.slice(0, 25)));
+    const company =
+      text(card.querySelector('[data-testid="company-name"], .companyName, [class*="company" i]')) ||
+      (at >= 0 ? lines[at + 1] || '' : '');
+    const snippet = (card.innerText || '').replace(/\s+/g, ' ').slice(0, 700);
+    out.push({
+      title,
+      company: company.slice(0, 80),
+      salary: (snippet.match(SALARY_RE) || [''])[0].trim(),
+      snippet,
+      url: href,
+    });
+  };
+
+  for (const selector of CARD_SELECTORS) {
+    document.querySelectorAll(selector).forEach((card) => push(card));
+    if (out.length >= 8) break;
+  }
+  // Fallback for sites we don't know: links that look like job postings.
+  if (out.length < 3) {
+    document.querySelectorAll('a[href]').forEach((a) => {
+      if (!JOB_LINK.test(a.getAttribute('href') || '')) return;
+      const card = a.closest('li, article, [class*="card" i]') || a.parentElement;
+      push(card, a);
+    });
+  }
+  return out.slice(0, 60);
+}
+
 // --- autofill ---------------------------------------------------------------
 //
 // Matches fields by everything a person would read: name/id/placeholder,
@@ -364,6 +423,7 @@ function fillApplication(profile) {
 
 // Lets the popup fill every frame (embedded Greenhouse/Lever forms live in iframes).
 window.__jobpilotFill = fillApplication;
+window.__jobpilotList = listJobs;
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message?.type === 'EXTRACT_JOB') {
@@ -373,6 +433,10 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message?.type === 'FILL_APPLICATION') {
     const { filled, attached } = fillApplication(message.profile || {});
     sendResponse({ ok: true, filled, attached });
+    return true;
+  }
+  if (message?.type === 'LIST_JOBS') {
+    sendResponse({ ok: true, jobs: listJobs() });
     return true;
   }
   if (message?.type === 'PING') {

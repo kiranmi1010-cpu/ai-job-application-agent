@@ -39,6 +39,12 @@
       .status.ok { color: #047857; }
       .muted { font-size: 10.5px; color: #64748b; }
       .hidden { display: none; }
+      .ranked { display: grid; gap: 6px; margin-top: 10px; max-height: 320px; overflow: auto; }
+      .rjob { display: grid; grid-template-columns: 38px 1fr; gap: 8px; align-items: center; padding: 7px; border: 1px solid #e2e8f0; border-radius: 10px; cursor: pointer; background: #fff; text-align: left; }
+      .rjob:hover { border-color: #a78bfa; background: #faf5ff; }
+      .rjob b { display: block; font-size: 12px; color: #0f172a; }
+      .rjob small { color: #64748b; font-size: 10.5px; }
+      .score { width: 36px; height: 36px; border-radius: 50%; display: grid; place-items: center; font: 700 10.5px/1 ui-sans-serif, system-ui; color: #fff; }
       .chips { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
       .chip { font-size: 10.5px; padding: 3px 8px; border-radius: 999px; background: #eef2ff; color: #3730a3; border: 1px solid #c7d2fe; }
       .chip.fact { background: #f1f5f9; color: #334155; border-color: #e2e8f0; }
@@ -84,6 +90,17 @@
         </details>
       </div>
 
+      <div class="card">
+        <div class="row" style="align-items:center">
+          <div style="flex:1">
+            <p class="job-title" style="font-size:13px">Jobs on this page</p>
+            <p class="job-meta">Ranks every job listed here against your roles and skills.</p>
+          </div>
+          <button class="primary" id="rankBtn" style="flex:0 0 auto">Find my best jobs</button>
+        </div>
+        <div id="ranked" class="ranked"></div>
+      </div>
+
       <div class="row">
         <button class="primary" id="draftBtn" disabled>Draft cover letter</button>
         <button class="ghost" id="rescanBtn">Re-read page</button>
@@ -107,6 +124,7 @@
           <div><label for="name">Full name</label><input id="name" /></div>
           <div><label for="email">Email</label><input id="email" /></div>
           <div><label for="phone">Phone</label><input id="phone" /></div>
+          <div><label for="roles">Roles you want (comma separated)</label><input id="roles" placeholder="Strategy analyst, Founder's office, Market research, Business planning" /></div>
           <div><label for="skills">Skills (comma separated)</label><input id="skills" /></div>
           <div><label for="linkedin">LinkedIn URL</label><input id="linkedin" /></div>
           <div><label for="city">Current city</label><input id="city" placeholder="Bengaluru" /></div>
