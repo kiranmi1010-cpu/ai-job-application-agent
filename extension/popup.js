@@ -404,8 +404,23 @@ async function saveProfile() {
     company: ui.company.value.trim(),
     portfolio: ui.portfolio.value.trim(),
   };
-  await chrome.storage.local.set({ profile });
+  try {
+    await chrome.storage.local.set({ profile });
+  } catch (error) {
+    ui.saveProfile.textContent = 'Could not save: ' + (error?.message || error);
+    return;
+  }
   setStatus('Details saved.', 'ok');
+  // The status line sits at the top of the panel; confirm on the button too,
+  // which is the part you can see after scrolling down to it.
+  ui.saveProfile.textContent = 'Saved ✓';
+  ui.saveProfile.style.borderColor = '#10b981';
+  ui.saveProfile.style.color = '#047857';
+  setTimeout(() => {
+    ui.saveProfile.textContent = 'Save details';
+    ui.saveProfile.style.borderColor = '';
+    ui.saveProfile.style.color = '';
+  }, 2500);
   if (currentJob) await renderJob(currentJob);
 }
 
