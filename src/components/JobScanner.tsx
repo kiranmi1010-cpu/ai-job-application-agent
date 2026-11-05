@@ -22,6 +22,7 @@ import { dbHelpers } from '../db';
 import { Job } from '../types';
 import { searchJobsWithQuery, calculateMatchScoreWithGemini, generateSearchQueries, parseRoleList } from '../services/jobSearch';
 import ApplyPanel from './ApplyPanel';
+import { AUTOSCAN_KEY } from './HudHero';
 
 // Score a list of jobs against the parsed resume; never leave a job at 0 without trying.
 async function scoreJobs(resumeData: any, list: any[]) {
@@ -56,6 +57,16 @@ export default function JobScanner() {
   useEffect(() => {
     loadJobs();
   }, []);
+
+  // "Run scan" on the ring screen opens this page and starts a search once the
+  // resume and target roles have loaded.
+  const [autoScan, setAutoScan] = useState(() => sessionStorage.getItem(AUTOSCAN_KEY) === '1');
+  useEffect(() => {
+    if (!autoScan || loading) return;
+    sessionStorage.removeItem(AUTOSCAN_KEY);
+    setAutoScan(false);
+    void handleSearch();
+  }, [autoScan, loading]);
 
   const loadJobs = async () => {
     try {
@@ -520,15 +531,8 @@ export default function JobScanner() {
 
               {/* Match Score */}
               <div className="flex items-center gap-4">
-                <div className="text-center">
-                  <div className={`inline-flex items-center gap-1 px-3 py-1.5 rounded-full text-sm font-bold ${
-                    job.matchScore >= 90 ? 'bg-green-100 text-green-700' :
-                    job.matchScore >= 80 ? 'bg-blue-100 text-blue-700' :
-                    'bg-yellow-100 text-yellow-700'
-                  }`}>
-                    <Star size={12} />
-                    {job.matchScore}% Match
-                  </div>
+                <div className="hud-fit" style={{ ['--v' as any]: Math.max(0, Math.min(100, job.matchScore || 0)) }} title={`${job.matchScore}% match`}>
+                  <span>{job.matchScore}%</span>
                 </div>
 
                 {/* Actions */}
