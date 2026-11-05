@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "JobPilot Assist",
-  "version": "1.4.1",
+  "version": "1.5.0",
   "description": "Read the job you are viewing on any job board or company careers page, draft a tailored cover letter, and fill the application form, resume included.",
   "permissions": [
     "storage",

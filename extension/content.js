@@ -1,7 +1,7 @@
 // Re-run when the extension was updated: an older copy left in the tab must
 // not stop the new version from loading.
-if (window.__jobpilotAssist !== '1.4.1') {
-window.__jobpilotAssist = '1.4.1';
+if (window.__jobpilotAssist !== '1.5.0') {
+window.__jobpilotAssist = '1.5.0';
 // JobPilot Assist — content script.
 //
 // Reads the posting you are looking at (schema.org JobPosting when the page
