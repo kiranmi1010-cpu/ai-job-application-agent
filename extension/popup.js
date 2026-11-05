@@ -5,6 +5,17 @@ const el = (id) => document.getElementById(id);
 const ui = {
   jobTitle: el('jobTitle'),
   jobMeta: el('jobMeta'),
+  jobFacts: el('jobFacts'),
+  fitCard: el('fitCard'),
+  fitRing: el('fitRing'),
+  fitScore: el('fitScore'),
+  fitLabel: el('fitLabel'),
+  fitNote: el('fitNote'),
+  matched: el('matched'),
+  missing: el('missing'),
+  matchedLabel: el('matchedLabel'),
+  missingLabel: el('missingLabel'),
+  desc: el('desc'),
   draft: el('draftBtn'),
   rescan: el('rescanBtn'),
   copy: el('copyBtn'),
@@ -49,6 +60,81 @@ async function ensureContentScript(tabId) {
   }
 }
 
+// --- what the job asks for vs what you have ----------------------------------
+
+// Skills and keywords that show up in strategy, business and marketing roles.
+// The job's keywords are whichever of these (plus your own skills) appear in
+// its description.
+const VOCAB = [
+  'market research', 'business strategy', 'strategic planning', 'business planning', 'strategy', 'business analysis',
+  'business development', 'operations', 'project management', 'program management', 'stakeholder management',
+  'financial modelling', 'financial modeling', 'forecasting', 'budgeting', 'p&l', 'unit economics', 'pricing',
+  'competitive analysis', 'go-to-market', 'gtm', 'growth', 'lead generation', 'sales', 'b2b', 'b2c', 'saas',
+  'digital marketing', 'performance marketing', 'seo', 'sem', 'social media', 'content marketing', 'email marketing',
+  'brand', 'branding', 'campaign', 'events', 'sponsorship', 'partnerships', 'crm', 'hubspot', 'salesforce',
+  'google analytics', 'analytics', 'data analysis', 'excel', 'powerpoint', 'sql', 'python', 'power bi', 'tableau',
+  'dashboards', 'kpi', 'okr', 'presentation', 'communication', 'negotiation', 'leadership', 'team management',
+  'process improvement', 'customer success', 'customer experience', 'product management', 'product marketing',
+  'research', 'consulting', 'mba', 'learning and development', 'l&d', 'training', 'instructional design', 'hr',
+  'recruitment', 'supply chain', 'procurement', 'ai', 'automation',
+];
+
+const norm = (s) => String(s || '').toLowerCase().replace(/\s+/g, ' ').trim();
+
+function hasTerm(haystack, term) {
+  const t = term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`(^|[^a-z])${t}([^a-z]|$)`, 'i').test(haystack);
+}
+
+function analyseFit(job, profile) {
+  const description = norm([job.title, job.description].join(' '));
+  const mine = String(profile.skills || '')
+    .split(/[,;\n]/)
+    .map(norm)
+    .filter(Boolean);
+  const asked = [...new Set([...VOCAB, ...mine].filter((term) => hasTerm(description, term)))];
+  // "strategy" is implied once a more specific strategy term matched.
+  const specific = asked.filter((t) => !(t === 'strategy' && asked.some((o) => o !== t && o.includes('strategy'))));
+  const have = specific.filter((t) => mine.some((m) => m === t || m.includes(t) || t.includes(m)));
+  const gaps = specific.filter((t) => !have.includes(t));
+  const score = specific.length ? Math.round((have.length / specific.length) * 100) : null;
+  return { have, gaps, score, hasSkills: mine.length > 0 };
+}
+
+const chip = (label, cls) => `<span class="chip ${cls}">${label.replace(/[<>&]/g, '')}</span>`;
+
+async function renderJob(job) {
+  ui.jobTitle.textContent = job.title;
+  ui.jobMeta.textContent = [job.company, job.location].filter(Boolean).join(' · ') || job.source || '';
+  ui.jobFacts.innerHTML = [job.salary, job.jobType, job.mode, job.source]
+    .filter(Boolean)
+    .map((f) => chip(f, 'fact'))
+    .join('');
+
+  const { profile = {} } = await chrome.storage.local.get('profile');
+  const fit = analyseFit(job, profile);
+  ui.fitCard.classList.remove('hidden');
+  ui.desc.textContent = job.description || 'No description found on this page.';
+  if (!fit.hasSkills) {
+    ui.fitScore.textContent = '?';
+    ui.fitRing.style.setProperty('--v', 0);
+    ui.fitLabel.textContent = 'Add your skills to see your match';
+    ui.fitNote.textContent = 'Open "Your details" below and fill in Skills.';
+  } else if (fit.score === null) {
+    ui.fitScore.textContent = '–';
+    ui.fitRing.style.setProperty('--v', 0);
+    ui.fitLabel.textContent = 'Not enough detail to score';
+    ui.fitNote.textContent = 'Open the full job description and press Re-read page.';
+  } else {
+    ui.fitScore.textContent = fit.score + '%';
+    ui.fitRing.style.setProperty('--v', fit.score);
+    ui.fitLabel.textContent = fit.score >= 60 ? 'Good match' : fit.score >= 35 ? 'Partial match' : 'Weak match';
+    ui.fitNote.textContent = `${fit.have.length} of ${fit.have.length + fit.gaps.length} skills this job mentions`;
+  }
+  ui.matched.innerHTML = fit.have.map((t) => chip(t, 'have')).join('') || '<span class="muted">None of your listed skills yet</span>';
+  ui.missing.innerHTML = fit.gaps.map((t) => chip(t, 'gap')).join('') || '<span class="muted">Nothing extra</span>';
+}
+
 async function readPage() {
   setStatus('Reading the page…');
   currentJob = null;
@@ -62,6 +148,8 @@ async function readPage() {
     const response = await chrome.tabs.sendMessage(tab.id, { type: 'EXTRACT_JOB' });
     const job = response?.job;
     if (!job || !job.title) {
+      ui.fitCard.classList.add('hidden');
+      ui.jobFacts.innerHTML = '';
       ui.jobTitle.textContent = 'No job posting detected';
       ui.jobMeta.textContent = 'You can still fill an application form on this page.';
       ui.fill.disabled = false;
@@ -69,8 +157,7 @@ async function readPage() {
       return;
     }
     currentJob = job;
-    ui.jobTitle.textContent = job.title;
-    ui.jobMeta.textContent = [job.company, job.location, job.source].filter(Boolean).join(' · ');
+    await renderJob(job);
     ui.draft.disabled = false;
     ui.fill.disabled = false;
     setStatus('Ready.', 'ok');
@@ -164,6 +251,7 @@ async function saveProfile() {
   };
   await chrome.storage.local.set({ profile });
   setStatus('Details saved.', 'ok');
+  if (currentJob) await renderJob(currentJob);
 }
 
 ui.draft.addEventListener('click', draftLetter);

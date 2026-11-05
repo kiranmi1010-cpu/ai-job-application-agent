@@ -112,19 +112,90 @@ function fromSite() {
   return { title: '', company: '', location: '', description: '', source: host };
 }
 
+// Headings that are page furniture, not a job title ("Welcome, Kiran" on the
+// Indeed home feed, "Jobs for you", ...).
+const NOT_A_TITLE = /^(welcome\b|hi,|hello\b|jobs for you|recommended|top job picks|home$|search|sign in|your job feed|similar jobs)/i;
+const goodTitle = (value) => Boolean(value) && value.length >= 4 && value.length <= 160 && !NOT_A_TITLE.test(value);
+
+function visible(el) {
+  if (!el) return false;
+  const rect = el.getBoundingClientRect();
+  return rect.width > 0 && rect.height > 0;
+}
+
+// Feeds and split views (Indeed home, LinkedIn jobs, Naukri) show the selected
+// job in a side pane next to an Apply button. Find that button, then the
+// smallest container around it that has a proper heading: that is the posting.
+function fromApplyPane() {
+  const applyRe = /^(apply( now| on company (site|website))?|easy apply|quick apply|i'?m interested|apply for this job)$/i;
+  const buttons = Array.from(document.querySelectorAll('button, a, [role="button"]')).filter(
+    (b) => visible(b) && applyRe.test(text(b))
+  );
+  for (const button of buttons) {
+    let node = button.parentElement;
+    for (let depth = 0; node && depth < 12; depth++, node = node.parentElement) {
+      const heading = Array.from(node.querySelectorAll('h1, h2, h3, [data-testid*="title" i]')).find(
+        (h) => visible(h) && goodTitle(text(h))
+      );
+      if (!heading) continue;
+      // Keep climbing until the container also holds the description.
+      let pane = node;
+      for (let up = 0; pane && up < 6 && text(pane).length < 600; up++) pane = pane.parentElement;
+      pane = pane || node;
+      const lines = (pane.innerText || '').split('\n').map((l) => l.trim()).filter(Boolean);
+      const titleText = text(heading).replace(/\s*-\s*job post$/i, '');
+      const at = lines.findIndex((l) => l.includes(titleText.slice(0, 30)));
+      const after = at >= 0 ? lines.slice(at + 1, at + 6) : [];
+      const company = after.find((l) => l.length < 80 && !/₹|\$|rs\.?\s|a month|a year|lpa|remote|hybrid|apply/i.test(l)) || '';
+      const loc = after.find((l) => l !== company && /remote|hybrid|on-?site|india|bengaluru|bangalore|mumbai|delhi|pune|hyderabad|chennai|gurgaon|gurugram|noida|kolkata|,/i.test(l) && l.length < 80) || '';
+      const descEl =
+        pane.querySelector('#jobDescriptionText, [id*="description" i], [class*="description" i], [data-testid*="description" i]');
+      return {
+        title: titleText,
+        company,
+        location: loc,
+        description: text(descEl) || lines.slice(at + 1).join(' '),
+        pageText: pane.innerText || '',
+        source: location.hostname.replace(/^www\./, ''),
+      };
+    }
+  }
+  return null;
+}
+
+const SALARY_RE = /(₹|rs\.?|inr|\$|€|£)\s?[\d,.]+\s?(k|l|lakh|lakhs|cr)?\s?(?:[-–to]+\s?(₹|rs\.?|inr|\$|€|£)?\s?[\d,.]+\s?(k|l|lakh|lakhs|cr)?)?\s?(a month|per month|\/month|a year|per year|\/year|per annum|p\.a\.|lpa|a day|an hour)?|[\d.]+\s?[-–]\s?[\d.]+\s?(lpa|lakhs?( per annum)?)/i;
+const TYPE_RE = /\b(full[- ]time|part[- ]time|permanent|contract(ual)?|internship|temporary|freelance)\b/i;
+const MODE_RE = /\b(remote|hybrid|on[- ]?site|work from home|wfh)\b/i;
+
 function extractJob() {
   const ld = fromJsonLd();
   const site = fromSite();
-  const pick = (a, b) => (a && a.length > 12 ? a : b || a || '');
-  const job = {
-    title: pick(ld?.title, site.title) || document.title.split('|')[0].trim(),
-    company: pick(ld?.company, site.company),
-    location: pick(ld?.location, site.location),
-    description: (ld?.description || site.description || '').slice(0, MAX_DESCRIPTION),
+  if (!goodTitle(site.title)) site.title = '';
+  const pane = fromApplyPane();
+  const pick = (...values) => values.find((v) => v && v.trim()) || '';
+
+  const title = pick(goodTitle(ld?.title) ? ld.title : '', site.title, pane?.title);
+  if (!title) {
+    const fallback = document.title.split(/[|\-–]/)[0].trim();
+    return { title: goodTitle(fallback) && !/indeed|linkedin|naukri|glassdoor/i.test(fallback) ? fallback : '', url: location.href };
+  }
+  const description = pick(ld?.description, site.description, pane?.description).slice(0, MAX_DESCRIPTION);
+  const haystack = [pane?.pageText, description].filter(Boolean).join('\n');
+  const salary = (haystack.match(SALARY_RE) || [''])[0].trim();
+  const jobType = (haystack.match(TYPE_RE) || [''])[0];
+  const mode = (haystack.match(MODE_RE) || [''])[0];
+
+  return {
+    title,
+    company: pick(ld?.company, site.company, pane?.company),
+    location: pick(ld?.location, site.location, pane?.location),
+    salary,
+    jobType,
+    mode,
+    description,
     url: location.href,
-    source: ld ? 'schema.org' : site.source,
+    source: ld ? 'schema.org' : site.title ? site.source : pane?.source || site.source,
   };
-  return job;
 }
 
 // --- autofill ---------------------------------------------------------------
