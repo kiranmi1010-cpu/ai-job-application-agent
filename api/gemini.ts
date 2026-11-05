@@ -137,6 +137,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       case 'analyze-job-fit':
         result = await analyzeJobFit(data.resume, data.job);
         break;
+      case 'answer-questions':
+        result = await answerQuestions(data.profile || {}, data.questions || [], data.job || {});
+        break;
       default:
         return res.status(400).json({ error: `Unknown action: ${action}` });
     }
@@ -387,5 +390,57 @@ Return ONLY valid JSON:
     return { success: true, data: JSON.parse(cleaned), provider };
   } catch (e) {
     return { success: false, error: 'Failed to parse response', raw: cleaned, provider };
+  }
+}
+
+
+// Draft answers to an application form's screening questions, strictly from
+// what the candidate wrote about themselves. Anything the profile does not
+// cover is left empty and flagged, never guessed: these answers are submitted
+// to employers under the candidate's name.
+async function answerQuestions(profile: any, questions: any[], job: any) {
+  const list = (questions || []).slice(0, 25).map((q: any, i: number) => ({
+    id: String(q.id ?? i),
+    question: String(q.question || '').slice(0, 400),
+    type: String(q.type || 'text'),
+    options: Array.isArray(q.options) ? q.options.slice(0, 15).map((o: any) => String(o).slice(0, 120)) : [],
+  }));
+  if (!list.length) return { success: true, data: { answers: [] } };
+
+  const prompt = `You are helping a job candidate fill in an employer's screening questions.
+Answer ONLY from the candidate profile below. Never invent experience, numbers, employers, tools or achievements.
+If the profile does not contain what a question needs, return an empty answer and set "needs_input" to a short note saying what the candidate must add.
+
+Candidate profile:
+- Name: ${profile.name || ''}
+- City: ${profile.city || ''}
+- Current / last company: ${profile.company || ''}
+- Roles wanted: ${profile.roles || ''}
+- Skills: ${profile.skills || ''}
+- About / experience (the candidate's own words): ${String(profile.summary || '').slice(0, 2500)}
+
+Job (for context): ${job.title || ''} at ${job.company || ''}
+
+Rules per question type:
+- "number": answer with digits only (e.g. "2"). For years of experience in a field, count only experience the profile states for that field; if none is stated, answer "0" only when the profile clearly shows no such experience, otherwise leave it empty with needs_input.
+- "select" or "radio": answer with one of the given options, copied exactly.
+- "checkbox": answer with the matching options separated by " | ".
+- "text" or "textarea": write in first person, specific and honest. Short-answer fields: one or two sentences. Textareas: 3 to 6 sentences.
+- Links (portfolio, work samples): only use links that appear in the profile.
+
+Questions (JSON):
+${JSON.stringify(list)}
+
+Return ONLY valid JSON, no markdown:
+{"answers":[{"id":"<id>","answer":"<text>","needs_input":"<empty string or what is missing>"}]}`;
+
+  const { text: raw, provider } = await generateText(prompt);
+  const cleaned = stripFences(raw);
+  try {
+    const parsed = JSON.parse(cleaned);
+    const answers = Array.isArray(parsed?.answers) ? parsed.answers : [];
+    return { success: true, data: { answers }, provider };
+  } catch (e) {
+    return { success: false, error: 'Failed to parse AI response', raw: cleaned, provider };
   }
 }

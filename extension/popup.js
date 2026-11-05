@@ -34,6 +34,10 @@ const ui = {
   resumeName: el('resumeName'),
   saveProfile: el('saveProfileBtn'),
   roles: el('roles'),
+  summary: el('summary'),
+  answer: el('answerBtn'),
+  qa: el('qa'),
+  fillAnswers: el('fillAnswersBtn'),
   rank: el('rankBtn'),
   ranked: el('ranked'),
 };
@@ -172,6 +176,78 @@ async function rankPage() {
   }
 }
 
+// --- screening questions -----------------------------------------------------
+
+let questionFrames = []; // [{frameId, questions}]
+
+async function answerForm() {
+  if (!currentTabId) currentTabId = (await getActiveTab())?.id;
+  ui.answer.disabled = true;
+  ui.fillAnswers.classList.add('hidden');
+  ui.qa.innerHTML = '<span class="muted">Reading the questions…</span>';
+  try {
+    await ensureContentScript(currentTabId);
+    const results = await chrome.scripting.executeScript({
+      target: { tabId: currentTabId, allFrames: true },
+      func: () => (window.__jobpilotQuestions ? window.__jobpilotQuestions() : []),
+    });
+    questionFrames = results.map((r) => ({ frameId: r.frameId, questions: r.result || [] })).filter((f) => f.questions.length);
+    const all = questionFrames.flatMap((f) => f.questions.map((q) => ({ ...q, frameId: f.frameId })));
+    if (!all.length) {
+      ui.qa.innerHTML = '<span class="muted">No questions found on this page. Open the step of the application that shows the questions, then try again.</span>';
+      return;
+    }
+    const { profile = {} } = await chrome.storage.local.get('profile');
+    if (!profile.summary && !profile.skills) {
+      ui.qa.innerHTML = '<span class="muted">Fill in "Your details" first (especially About you), then try again, so the answers are about you.</span>';
+      return;
+    }
+    ui.qa.innerHTML = `<span class="muted">Drafting answers to ${all.length} question(s)…</span>`;
+    const response = await chrome.runtime.sendMessage({
+      type: 'ANSWER_QUESTIONS',
+      questions: all.map(({ id, question, type, options }) => ({ id: id, question, type, options })),
+      job: currentJob || {},
+    });
+    if (!response?.ok) throw new Error(response?.error || 'Could not draft answers.');
+    const byId = new Map((response.answers || []).map((a) => [String(a.id), a]));
+    ui.qa.innerHTML = all
+      .map((q) => {
+        const a = byId.get(q.id) || {};
+        const safe = (v) => String(v || '').replace(/[<>&"]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
+        return `<div><div class="q">${safe(q.question)}</div>
+          <textarea data-q="${q.id}" data-frame="${q.frameId}">${safe(a.answer)}</textarea>
+          ${a.needs_input ? `<div class="need">Needs you: ${safe(a.needs_input)}</div>` : ''}</div>`;
+      })
+      .join('');
+    ui.fillAnswers.classList.remove('hidden');
+    setStatus('Answers drafted. Read and edit them, then fill them in.', 'ok');
+  } catch (error) {
+    ui.qa.innerHTML = `<span class="muted">${String(error?.message || error)}</span>`;
+  } finally {
+    ui.answer.disabled = false;
+  }
+}
+
+async function fillAnswers() {
+  const boxes = Array.from(ui.qa.querySelectorAll('textarea[data-q]'));
+  const byFrame = new Map();
+  boxes.forEach((box) => {
+    const frame = Number(box.dataset.frame);
+    if (!byFrame.has(frame)) byFrame.set(frame, []);
+    byFrame.get(frame).push({ id: box.dataset.q, answer: box.value.trim() });
+  });
+  let total = 0;
+  for (const [frameId, answers] of byFrame) {
+    const results = await chrome.scripting.executeScript({
+      target: { tabId: currentTabId, frameIds: [frameId] },
+      func: (list) => (window.__jobpilotAnswer ? window.__jobpilotAnswer(list) : 0),
+      args: [answers],
+    });
+    total += results.reduce((sum, r) => sum + (r.result || 0), 0);
+  }
+  setStatus(`Filled ${total} answer(s). Check them on the page, then press Continue/Submit yourself.`, total ? 'ok' : 'error');
+}
+
 const chip = (label, cls) => `<span class="chip ${cls}">${label.replace(/[<>&]/g, '')}</span>`;
 
 async function renderJob(job) {
@@ -303,6 +379,7 @@ async function loadProfile() {
   ui.skills.value = profile.skills || '';
   ui.linkedin.value = profile.linkedin || '';
   ui.roles.value = profile.roles || '';
+  ui.summary.value = profile.summary || '';
   ui.city.value = profile.city || '';
   ui.company.value = profile.company || '';
   ui.portfolio.value = profile.portfolio || '';
@@ -317,6 +394,7 @@ async function saveProfile() {
     phone: ui.phone.value.trim(),
     skills: ui.skills.value.trim(),
     roles: ui.roles.value.trim(),
+    summary: ui.summary.value.trim(),
     linkedin: ui.linkedin.value.trim(),
     city: ui.city.value.trim(),
     company: ui.company.value.trim(),
@@ -333,6 +411,8 @@ ui.copy.addEventListener('click', copyLetter);
 ui.fill.addEventListener('click', fillForm);
 ui.saveProfile.addEventListener('click', saveProfile);
 ui.rank.addEventListener('click', rankPage);
+ui.answer.addEventListener('click', answerForm);
+ui.fillAnswers.addEventListener('click', fillAnswers);
 ui.resumeFile.addEventListener('change', () => {
   const file = ui.resumeFile.files && ui.resumeFile.files[0];
   if (!file) return;

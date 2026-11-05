@@ -39,6 +39,10 @@
       .status.ok { color: #047857; }
       .muted { font-size: 10.5px; color: #64748b; }
       .hidden { display: none; }
+      .qa { display: grid; gap: 8px; margin-top: 10px; max-height: 360px; overflow: auto; }
+      .qa .q { font-size: 11.5px; font-weight: 600; color: #0f172a; }
+      .qa textarea { min-height: 54px; margin-top: 4px; }
+      .qa .need { font-size: 10.5px; color: #b45309; margin-top: 2px; }
       .ranked { display: grid; gap: 6px; margin-top: 10px; max-height: 320px; overflow: auto; }
       .rjob { display: grid; grid-template-columns: 38px 1fr; gap: 8px; align-items: center; padding: 7px; border: 1px solid #e2e8f0; border-radius: 10px; cursor: pointer; background: #fff; text-align: left; }
       .rjob:hover { border-color: #a78bfa; background: #faf5ff; }
@@ -101,6 +105,18 @@
         <div id="ranked" class="ranked"></div>
       </div>
 
+      <div class="card">
+        <div class="row" style="align-items:center">
+          <div style="flex:1">
+            <p class="job-title" style="font-size:13px">Questions on this form</p>
+            <p class="job-meta">Drafts answers from your details. Edit them, then fill.</p>
+          </div>
+          <button class="primary" id="answerBtn" style="flex:0 0 auto">Answer questions</button>
+        </div>
+        <div id="qa" class="qa"></div>
+        <button class="ghost hidden" id="fillAnswersBtn" style="width:100%;margin-top:8px">Fill these answers into the form</button>
+      </div>
+
       <div class="row">
         <button class="primary" id="draftBtn" disabled>Draft cover letter</button>
         <button class="ghost" id="rescanBtn">Re-read page</button>
@@ -126,6 +142,7 @@
           <div><label for="phone">Phone</label><input id="phone" /></div>
           <div><label for="roles">Roles you want (comma separated)</label><input id="roles" placeholder="Strategy analyst, Founder's office, Market research, Business planning" /></div>
           <div><label for="skills">Skills (comma separated)</label><input id="skills" /></div>
+          <div><label for="summary">About you: experience, tools, achievements (used to answer questions)</label><textarea id="summary" style="min-height:110px" placeholder="E.g. Digital Marketing Manager at UNCareerHub (Oct 2025 - Jun 2026, part-time): lead generation, 45+ qualified leads in 2 weeks..."></textarea></div>
           <div><label for="linkedin">LinkedIn URL</label><input id="linkedin" /></div>
           <div><label for="city">Current city</label><input id="city" placeholder="Bengaluru" /></div>
           <div><label for="company">Current / last company</label><input id="company" /></div>
