@@ -218,18 +218,66 @@ async function answerForm() {
       .map((q) => {
         const a = byId.get(q.id) || {};
         const safe = (v) => String(v || '').replace(/[<>&"]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
-        return `<div><div class="q">${safe(q.question)}</div>
+        return `<div class="qitem"><div class="q">${safe(q.question)}</div>
           <textarea data-q="${q.id}" data-frame="${q.frameId}">${safe(a.answer)}</textarea>
-          ${a.needs_input ? `<div class="need">Needs you: ${safe(a.needs_input)}</div>` : ''}</div>`;
+          ${a.needs_input ? `<div class="need">Needs you: ${safe(a.needs_input)}</div>` : ''}
+          <div class="qtools"><button class="ghost polish" type="button">Polish my draft</button><button class="ghost undo hidden" type="button">Undo</button></div>
+          <div class="changes"></div></div>`;
       })
       .join('');
     ui.fillAnswers.classList.remove('hidden');
-    setStatus('Answers drafted. Read and edit them, then fill them in.', 'ok');
+    bindPolishButtons(ui.qa, all);
+    setStatus('Drafts ready. Rewrite any answer in your own words, then press "Polish my draft" to clean it up.', 'ok');
   } catch (error) {
     ui.qa.innerHTML = `<span class="muted">${String(error?.message || error)}</span>`;
   } finally {
     ui.answer.disabled = false;
   }
+}
+
+// Your way of writing: you write it, AI checks grammar and suggests light
+// improvements while keeping your essence. Each change is listed, and Undo
+// brings your own version back.
+async function polishText(question, draft) {
+  const { profile = {} } = await chrome.storage.local.get('profile');
+  return chrome.runtime.sendMessage({ type: 'POLISH_ANSWER', question, draft, profile });
+}
+
+function bindPolishButtons(root, questions) {
+  root.querySelectorAll('.qitem').forEach((item, i) => {
+    const box = item.querySelector('textarea');
+    const polish = item.querySelector('.polish');
+    const undo = item.querySelector('.undo');
+    const changes = item.querySelector('.changes');
+    let original = '';
+    polish.addEventListener('click', async () => {
+      if (!box.value.trim()) {
+        changes.textContent = 'Write your answer in the box first.';
+        return;
+      }
+      polish.disabled = true;
+      polish.textContent = 'Polishing…';
+      original = box.value;
+      try {
+        const res = await polishText(questions[i]?.question || '', box.value);
+        if (!res?.ok) throw new Error(res?.error || 'Could not polish.');
+        box.value = res.polished;
+        const list = (res.changes || []).map((c) => '• ' + c).join('\n');
+        changes.textContent = [list || 'No changes needed.', res.notes ? 'Tip: ' + res.notes : ''].filter(Boolean).join('\n');
+        undo.classList.remove('hidden');
+      } catch (error) {
+        changes.textContent = String(error?.message || error);
+      } finally {
+        polish.disabled = false;
+        polish.textContent = 'Polish my draft';
+      }
+    });
+    undo.addEventListener('click', () => {
+      box.value = original;
+      changes.textContent = 'Back to your version.';
+      undo.classList.add('hidden');
+    });
+  });
 }
 
 async function fillAnswers() {

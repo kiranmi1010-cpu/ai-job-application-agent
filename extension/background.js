@@ -53,7 +53,29 @@ async function answerQuestions(questions, job, profile) {
   return { ok: true, answers: body.data?.answers || [] };
 }
 
+async function polishAnswer(question, draft, profile) {
+  const response = await fetch(`${API_BASE}/api/gemini`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'polish-answer', data: { question, draft, profile } }),
+  });
+  if (!response.ok) return { ok: false, error: `JobPilot API returned HTTP ${response.status}` };
+  const body = await response.json();
+  if (!body?.success) return { ok: false, error: body?.error || 'Could not polish.' };
+  return { ok: true, ...body.data };
+}
+
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  if (message?.type === 'POLISH_ANSWER') {
+    (async () => {
+      try {
+        sendResponse(await polishAnswer(message.question || '', message.draft || '', message.profile || {}));
+      } catch (error) {
+        sendResponse({ ok: false, error: error?.message || String(error) });
+      }
+    })();
+    return true;
+  }
   if (message?.type === 'ANSWER_QUESTIONS') {
     (async () => {
       try {
