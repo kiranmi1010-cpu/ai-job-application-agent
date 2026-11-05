@@ -13,7 +13,7 @@
         color: #0f172a;
         background: #f8fafc;
       }
-      header { padding: 14px 16px 10px; background: linear-gradient(135deg, #2563eb, #7c3aed); color: white; }
+      header { padding: 14px 16px 10px; background: radial-gradient(circle at 30% 0%, #5b3aa8 0%, #1a1230 70%); color: #f4efff; }
       header h1 { margin: 0; font-size: 15px; letter-spacing: .3px; }
       header p { margin: 3px 0 0; font-size: 11px; opacity: .85; }
       main { padding: 14px 16px 16px; display: grid; gap: 12px; }
@@ -26,7 +26,7 @@
         font: 600 12px/1 ui-sans-serif, system-ui, "Segoe UI", sans-serif; cursor: pointer;
       }
       button:disabled { opacity: .5; cursor: not-allowed; }
-      .primary { background: linear-gradient(135deg, #2563eb, #7c3aed); color: white; }
+      .primary { background: linear-gradient(180deg, #8a5fe0, #3b2470); color: white; }
       .ghost { background: white; border-color: #cbd5e1; color: #0f172a; }
       label { font-size: 10px; text-transform: uppercase; letter-spacing: .08em; color: #64748b; font-weight: 600; }
       input, textarea {
@@ -39,6 +39,18 @@
       .status.ok { color: #047857; }
       .muted { font-size: 10.5px; color: #64748b; }
       .hidden { display: none; }
+      .chips { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
+      .chip { font-size: 10.5px; padding: 3px 8px; border-radius: 999px; background: #eef2ff; color: #3730a3; border: 1px solid #c7d2fe; }
+      .chip.fact { background: #f1f5f9; color: #334155; border-color: #e2e8f0; }
+      .chip.have { background: #ecfdf5; color: #065f46; border-color: #a7f3d0; }
+      .chip.gap { background: #fff7ed; color: #9a3412; border-color: #fed7aa; }
+      .fit-head { display: flex; gap: 12px; align-items: center; }
+      .fit-ring { width: 52px; height: 52px; border-radius: 50%; display: grid; place-items: center; flex-shrink: 0;
+        background: conic-gradient(#7c3aed calc(var(--v, 0) * 1%), #ede9fe 0); position: relative; font-weight: 700; font-size: 12px; }
+      .fit-ring::after { content: ''; position: absolute; inset: 6px; border-radius: 50%; background: white; }
+      .fit-ring span { position: relative; z-index: 1; }
+      .mini { margin: 10px 0 0; font-size: 10px; text-transform: uppercase; letter-spacing: .08em; color: #64748b; font-weight: 600; }
+      .desc { white-space: pre-wrap; font-size: 11.5px; color: #334155; max-height: 220px; overflow: auto; margin: 6px 0 0; }
     </style>
   </head>
   <body>
@@ -51,6 +63,25 @@
       <div class="card">
         <p class="job-title" id="jobTitle">No supported job page detected</p>
         <p class="job-meta" id="jobMeta">Open a job posting or an application form on any site.</p>
+        <div class="chips" id="jobFacts"></div>
+      </div>
+
+      <div class="card hidden" id="fitCard">
+        <div class="fit-head">
+          <div class="fit-ring" id="fitRing"><span id="fitScore">–</span></div>
+          <div>
+            <p class="job-title" style="font-size:13px" id="fitLabel">How well you match</p>
+            <p class="job-meta" id="fitNote">Based on the skills in "Your details".</p>
+          </div>
+        </div>
+        <p class="mini" id="matchedLabel">You have</p>
+        <div class="chips" id="matched"></div>
+        <p class="mini" id="missingLabel">The job also asks for</p>
+        <div class="chips" id="missing"></div>
+        <details style="margin-top:8px">
+          <summary class="muted" style="cursor:pointer">Job description</summary>
+          <p class="desc" id="desc"></p>
+        </details>
       </div>
 
       <div class="row">
