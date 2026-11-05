@@ -1,3 +1,5 @@
+if (!window.__jobpilotAssist) {
+window.__jobpilotAssist = true;
 // JobPilot Assist — content script.
 //
 // Reads the posting you are looking at (schema.org JobPosting when the page
@@ -126,19 +128,71 @@ function extractJob() {
 }
 
 // --- autofill ---------------------------------------------------------------
+//
+// Matches fields by everything a person would read: name/id/placeholder,
+// aria-label, autocomplete, and the visible <label>. That is what makes it work
+// on company career pages (Greenhouse, Lever, Workday, Ashby, Keka, ...) and not
+// only on the big boards.
 
 const FIELD_HINTS = {
-  name: ['name', 'fullname', 'full_name', 'full-name', 'candidate_name', 'applicantname'],
-  email: ['email', 'mail', 'e-mail', 'emailaddress'],
-  phone: ['phone', 'mobile', 'contact', 'phonenumber', 'telephone'],
+  firstName: ['first name', 'firstname', 'first_name', 'given name', 'given-name', 'fname'],
+  lastName: ['last name', 'lastname', 'last_name', 'surname', 'family name', 'family-name', 'lname'],
+  name: ['full name', 'fullname', 'full_name', 'full-name', 'your name', 'candidate name', 'candidate_name', 'applicantname', 'name'],
+  email: ['email', 'e-mail', 'mail'],
+  phone: ['phone', 'mobile', 'contact number', 'telephone', 'tel'],
   linkedin: ['linkedin'],
-  portfolio: ['portfolio', 'website', 'github'],
-  cover: ['cover', 'coverletter', 'cover_letter', 'message', 'why', 'summary'],
+  portfolio: ['portfolio', 'website', 'personal site', 'github', 'url'],
+  city: ['current location', 'current city', 'city', 'location'],
+  company: ['current company', 'current employer', 'company name', 'employer', 'organization', 'organisation'],
+  cover: ['cover letter', 'coverletter', 'cover_letter', 'why do you want', 'why are you interested', 'message', 'additional information', 'summary'],
 };
 
-function matches(field, hints) {
-  const hay = `${field.name || ''} ${field.id || ''} ${field.placeholder || ''} ${field.getAttribute('aria-label') || ''}`.toLowerCase();
-  return hints.some((hint) => hay.includes(hint));
+// Fields we must never touch: passwords, salary, captcha, search boxes.
+const NEVER = ['password', 'captcha', 'salary', 'ctc', 'search', 'otp', 'coupon', 'card'];
+
+function labelText(field) {
+  const parts = [];
+  if (field.id) {
+    try {
+      document.querySelectorAll(`label[for="${CSS.escape(field.id)}"]`).forEach((l) => parts.push(text(l)));
+    } catch {
+      /* odd id */
+    }
+  }
+  const wrap = field.closest('label');
+  if (wrap) parts.push(text(wrap));
+  const labelledBy = field.getAttribute('aria-labelledby');
+  if (labelledBy) labelledBy.split(/\s+/).forEach((id) => parts.push(text(document.getElementById(id))));
+  // Greenhouse/Lever/Workday put the label in the field's container.
+  const box = field.closest('.field, .application-question, [data-automation-id], .form-group, li, div');
+  if (box && parts.length === 0 && box.querySelectorAll('input, textarea, select').length === 1) {
+    const lab = box.querySelector('label, legend, .label, [class*="label"]');
+    if (lab) parts.push(text(lab));
+  }
+  return parts.join(' ');
+}
+
+function describe(field) {
+  return [
+    field.name,
+    field.id,
+    field.placeholder,
+    field.getAttribute('aria-label'),
+    field.getAttribute('autocomplete'),
+    labelText(field),
+  ]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase()
+    .replace(/[_-]+/g, ' ');
+}
+
+function hits(desc, hints) {
+  return hints.some((hint) => {
+    const h = hint.replace(/[_-]+/g, ' ');
+    // Short hints ("name", "tel", "url") must be whole words.
+    return h.length <= 4 ? new RegExp(`\\b${h}\\b`).test(desc) : desc.includes(h);
+  });
 }
 
 function setValue(field, value) {
@@ -152,30 +206,93 @@ function setValue(field, value) {
   return true;
 }
 
+function splitName(full) {
+  const parts = String(full || '').trim().split(/\s+/);
+  if (parts.length < 2) return { first: parts[0] || '', last: '' };
+  return { first: parts.slice(0, -1).join(' '), last: parts[parts.length - 1] };
+}
+
+function dataUrlToFile(dataUrl, name, type) {
+  const [, b64] = String(dataUrl).split(',');
+  const bin = atob(b64 || '');
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return new File([bytes], name || 'resume.pdf', { type: type || 'application/pdf' });
+}
+
+function attachResume(resume) {
+  if (!resume?.data) return false;
+  const inputs = Array.from(document.querySelectorAll('input[type="file"]')).filter((f) => !f.disabled);
+  if (!inputs.length) return false;
+  // Prefer the field that is clearly for a resume/CV, not a cover-letter upload.
+  const target =
+    inputs.find((f) => /resume|\bcv\b|curriculum/.test(describe(f))) ||
+    inputs.find((f) => !/cover/.test(describe(f))) ||
+    inputs[0];
+  if (target.files && target.files.length) return false; // you already attached one
+  try {
+    const transfer = new DataTransfer();
+    transfer.items.add(dataUrlToFile(resume.data, resume.name, resume.type));
+    target.files = transfer.files;
+    target.dispatchEvent(new Event('input', { bubbles: true }));
+    target.dispatchEvent(new Event('change', { bubbles: true }));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function fillApplication(profile) {
-  const fields = Array.from(document.querySelectorAll('input, textarea'));
+  const fields = Array.from(document.querySelectorAll('input, textarea')).filter((field) => {
+    const type = (field.getAttribute('type') || 'text').toLowerCase();
+    const fillable = field instanceof HTMLTextAreaElement || ['text', 'email', 'tel', 'url', ''].includes(type);
+    return fillable && !field.disabled && !field.readOnly && field.offsetParent !== null;
+  });
+
+  const { first, last } = splitName(profile.name);
+  const values = {
+    firstName: first,
+    lastName: last,
+    name: profile.name,
+    email: profile.email,
+    phone: profile.phone,
+    linkedin: profile.linkedin,
+    portfolio: profile.portfolio,
+    city: profile.city,
+    company: profile.company,
+    cover: profile.coverLetter || profile.cover,
+  };
+  // Most specific first, so "First name" is not filled with the full name.
+  const order = ['firstName', 'lastName', 'email', 'phone', 'linkedin', 'portfolio', 'company', 'city', 'name', 'cover'];
+
+  const used = new Set();
   let filled = 0;
-  const map = [
-    ['name', profile.name],
-    ['email', profile.email],
-    ['phone', profile.phone],
-    ['linkedin', profile.linkedin],
-    ['portfolio', profile.portfolio],
-    ['cover', profile.coverLetter || profile.cover],
-  ];
-  for (const [key, value] of map) {
-    if (!value) continue;
-    for (const field of fields) {
-      if (field.disabled || field.readOnly) continue;
-      if (field.value && !matches(field, ['cover'])) continue;
-      if (matches(field, FIELD_HINTS[key]) && setValue(field, value)) {
+  for (const field of fields) {
+    const desc = describe(field);
+    if (!desc || hits(desc, NEVER)) continue;
+    if (field.value && !(field instanceof HTMLTextAreaElement && hits(desc, FIELD_HINTS.cover))) continue;
+    const isTextarea = field instanceof HTMLTextAreaElement;
+    for (const key of order) {
+      if (!values[key]) continue;
+      if (key === 'cover' && !isTextarea) continue;
+      if (key !== 'cover' && isTextarea) continue;
+      if (key === 'name' && (hits(desc, FIELD_HINTS.firstName) || hits(desc, FIELD_HINTS.lastName) || /company|employer|school|college|reference/.test(desc))) continue;
+      if (!hits(desc, FIELD_HINTS[key])) continue;
+      if (key !== 'cover' && used.has(key) && key !== 'email') continue;
+      if (setValue(field, values[key])) {
+        used.add(key);
         filled += 1;
-        break;
       }
+      break;
     }
   }
-  return filled;
+
+  const attached = attachResume(profile.resume);
+  return { filled, attached };
 }
+
+// Lets the popup fill every frame (embedded Greenhouse/Lever forms live in iframes).
+window.__jobpilotFill = fillApplication;
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message?.type === 'EXTRACT_JOB') {
@@ -183,9 +300,15 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     return true;
   }
   if (message?.type === 'FILL_APPLICATION') {
-    const filled = fillApplication(message.profile || {});
-    sendResponse({ ok: true, filled });
+    const { filled, attached } = fillApplication(message.profile || {});
+    sendResponse({ ok: true, filled, attached });
+    return true;
+  }
+  if (message?.type === 'PING') {
+    sendResponse({ ok: true });
     return true;
   }
   return false;
 });
+
+}

@@ -87,6 +87,15 @@ To send emails directly from the app:
 
 **Without Gmail**: You can still compose emails and open them in Gmail or your mail client!
 
+## 📱 Use it on your phone
+
+The app is installable as a phone app (Android: Chrome ⋮ → **Install app**; iPhone: Safari → Share → **Add to Home Screen**).
+To share the same data between laptop and phone, turn on cloud sync: see **[SYNC_SETUP.md](SYNC_SETUP.md)** (free Supabase project, about 5 minutes).
+
+## 🧩 JobPilot Assist (Chrome extension)
+
+Fills applications on job boards and company careers pages (Greenhouse, Lever, Workday, Ashby, Keka, Darwinbox and others): name, contact details, LinkedIn, cover letter and your resume file. You review and press submit. See [extension/README.md](extension/README.md).
+
 ## 💾 Data Storage
 
 All your data is stored **locally in your browser** using IndexedDB:

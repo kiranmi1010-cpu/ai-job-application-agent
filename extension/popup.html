@@ -50,7 +50,7 @@
     <main>
       <div class="card">
         <p class="job-title" id="jobTitle">No supported job page detected</p>
-        <p class="job-meta" id="jobMeta">Open a posting on LinkedIn, Naukri, Indeed, Glassdoor or Wellfound.</p>
+        <p class="job-meta" id="jobMeta">Open a job posting or an application form on any site.</p>
       </div>
 
       <div class="row">
@@ -73,11 +73,19 @@
       <details class="card">
         <summary class="muted" style="cursor: pointer">Your details (used for letters and autofill)</summary>
         <div style="display: grid; gap: 8px; margin-top: 8px">
-          <div><label for="name">Name</label><input id="name" /></div>
+          <div><label for="name">Full name</label><input id="name" /></div>
           <div><label for="email">Email</label><input id="email" /></div>
           <div><label for="phone">Phone</label><input id="phone" /></div>
           <div><label for="skills">Skills (comma separated)</label><input id="skills" /></div>
           <div><label for="linkedin">LinkedIn URL</label><input id="linkedin" /></div>
+          <div><label for="city">Current city</label><input id="city" placeholder="Bengaluru" /></div>
+          <div><label for="company">Current / last company</label><input id="company" /></div>
+          <div><label for="portfolio">Portfolio / website</label><input id="portfolio" /></div>
+          <div>
+            <label for="resumeFile">Resume file (attached when you fill a form)</label>
+            <input id="resumeFile" type="file" accept=".pdf,.doc,.docx" />
+            <p class="muted" id="resumeName"></p>
+          </div>
           <button class="ghost" id="saveProfileBtn">Save details</button>
         </div>
       </details>

@@ -16,6 +16,11 @@ const ui = {
   phone: el('phone'),
   skills: el('skills'),
   linkedin: el('linkedin'),
+  city: el('city'),
+  company: el('company'),
+  portfolio: el('portfolio'),
+  resumeFile: el('resumeFile'),
+  resumeName: el('resumeName'),
   saveProfile: el('saveProfileBtn'),
 };
 
@@ -32,6 +37,18 @@ async function getActiveTab() {
   return tab || null;
 }
 
+// Boards and common ATS pages get the content script automatically. On any
+// other careers page, inject it now (allowed by activeTab when you click).
+async function ensureContentScript(tabId) {
+  try {
+    await chrome.tabs.sendMessage(tabId, { type: 'PING' });
+  } catch {
+    await chrome.scripting.executeScript({ target: { tabId, allFrames: true }, files: ['content.js'] }).catch(() =>
+      chrome.scripting.executeScript({ target: { tabId }, files: ['content.js'] })
+    );
+  }
+}
+
 async function readPage() {
   setStatus('Reading the page…');
   currentJob = null;
@@ -41,11 +58,13 @@ async function readPage() {
     const tab = await getActiveTab();
     if (!tab?.id) throw new Error('no active tab');
     currentTabId = tab.id;
+    await ensureContentScript(tab.id);
     const response = await chrome.tabs.sendMessage(tab.id, { type: 'EXTRACT_JOB' });
     const job = response?.job;
     if (!job || !job.title) {
-      ui.jobTitle.textContent = 'No supported job page detected';
-      ui.jobMeta.textContent = 'Open a posting on LinkedIn, Naukri, Indeed, Glassdoor or Wellfound.';
+      ui.jobTitle.textContent = 'No job posting detected';
+      ui.jobMeta.textContent = 'You can still fill an application form on this page.';
+      ui.fill.disabled = false;
       setStatus('');
       return;
     }
@@ -56,6 +75,7 @@ async function readPage() {
     ui.fill.disabled = false;
     setStatus('Ready.', 'ok');
   } catch {
+    ui.fill.disabled = true;
     ui.jobTitle.textContent = 'Cannot read this page';
     ui.jobMeta.textContent = 'Reload the job page, then reopen this panel.';
     setStatus('Reload the tab and try again.', 'error');
@@ -94,14 +114,24 @@ async function copyLetter() {
 
 async function fillForm() {
   if (!currentTabId) return;
-  const { profile = {} } = await chrome.storage.local.get('profile');
+  const { profile = {}, resume = null } = await chrome.storage.local.get(['profile', 'resume']);
   try {
-    const response = await chrome.tabs.sendMessage(currentTabId, {
-      type: 'FILL_APPLICATION',
-      profile: { ...profile, coverLetter: ui.letter.value },
+    await ensureContentScript(currentTabId);
+    // Run in every frame and add up the results: many company sites embed the
+    // actual form (Greenhouse, Lever, Workday) in an iframe.
+    const results = await chrome.scripting.executeScript({
+      target: { tabId: currentTabId, allFrames: true },
+      func: (payload) => (window.__jobpilotFill ? window.__jobpilotFill(payload) : { filled: 0, attached: false }),
+      args: [{ ...profile, resume, coverLetter: ui.letter.value }],
     });
-    const filled = response?.filled || 0;
-    setStatus(filled ? `Filled ${filled} field(s). Review before submitting.` : 'No matching fields on this page.', filled ? 'ok' : 'error');
+    const filled = results.reduce((sum, r) => sum + (r?.result?.filled || 0), 0);
+    const attached = results.some((r) => r?.result?.attached) ? ' and attached your resume' : '';
+    setStatus(
+      filled || attached
+        ? `Filled ${filled} field(s)${attached}. Check every field, answer the remaining questions, then press submit.`
+        : 'No matching fields on this page. If the form is in a popup, open it first and try again.',
+      filled || attached ? 'ok' : 'error'
+    );
   } catch {
     setStatus('Could not reach the page. Reload it and try again.', 'error');
   }
@@ -114,6 +144,11 @@ async function loadProfile() {
   ui.phone.value = profile.phone || '';
   ui.skills.value = profile.skills || '';
   ui.linkedin.value = profile.linkedin || '';
+  ui.city.value = profile.city || '';
+  ui.company.value = profile.company || '';
+  ui.portfolio.value = profile.portfolio || '';
+  const { resume } = await chrome.storage.local.get('resume');
+  ui.resumeName.textContent = resume?.name ? `Saved: ${resume.name}` : 'No resume saved yet.';
 }
 
 async function saveProfile() {
@@ -123,6 +158,9 @@ async function saveProfile() {
     phone: ui.phone.value.trim(),
     skills: ui.skills.value.trim(),
     linkedin: ui.linkedin.value.trim(),
+    city: ui.city.value.trim(),
+    company: ui.company.value.trim(),
+    portfolio: ui.portfolio.value.trim(),
   };
   await chrome.storage.local.set({ profile });
   setStatus('Details saved.', 'ok');
@@ -133,6 +171,21 @@ ui.rescan.addEventListener('click', readPage);
 ui.copy.addEventListener('click', copyLetter);
 ui.fill.addEventListener('click', fillForm);
 ui.saveProfile.addEventListener('click', saveProfile);
+ui.resumeFile.addEventListener('change', () => {
+  const file = ui.resumeFile.files && ui.resumeFile.files[0];
+  if (!file) return;
+  if (file.size > 4 * 1024 * 1024) {
+    setStatus('That file is over 4 MB. Save a smaller PDF and try again.', 'error');
+    return;
+  }
+  const reader = new FileReader();
+  reader.onload = async () => {
+    await chrome.storage.local.set({ resume: { name: file.name, type: file.type, data: reader.result } });
+    ui.resumeName.textContent = `Saved: ${file.name}`;
+    setStatus('Resume saved. It is attached when you fill a form.', 'ok');
+  };
+  reader.readAsDataURL(file);
+});
 ui.letter.addEventListener('input', () => {
   ui.copy.disabled = !ui.letter.value.trim();
 });

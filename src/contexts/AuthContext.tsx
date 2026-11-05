@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { dbHelpers } from '../db';
+import { cloudEnabled, supabase, startSyncLoop, flushAndClearLocal } from '../services/cloudSync';
 
 interface User {
   email: string;
@@ -10,7 +11,7 @@ interface AuthContextType {
   user: User | null;
   login: (email: string, password: string) => Promise<boolean>;
   signup: (email: string, password: string, name: string) => Promise<boolean>;
-  logout: () => void;
+  logout: () => void | Promise<void>;
   isAuthenticated: boolean;
   /** Rename the user everywhere, including the stored resume, so letters match. */
   updateName: (name: string) => Promise<void>;
@@ -35,7 +36,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     let cancelled = false;
     let stored: User | null = null;
 
-    const raw = localStorage.getItem(STORAGE_KEY);
+    // With cloud accounts the Supabase session decides who is signed in.
+    const raw = cloudEnabled ? null : localStorage.getItem(STORAGE_KEY);
     if (raw) {
       try {
         stored = JSON.parse(raw) as User;
@@ -66,6 +68,35 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
+  // Cloud accounts: the Supabase session is the source of truth, and signing in
+  // on any device starts syncing that account's data to it.
+  useEffect(() => {
+    if (!supabase) return;
+    const fromSession = (session: any): User | null =>
+      session?.user
+        ? {
+            email: session.user.email || '',
+            name: session.user.user_metadata?.name || (session.user.email || '').split('@')[0],
+          }
+        : null;
+
+    supabase.auth.getSession().then(({ data }) => {
+      const next = fromSession(data.session);
+      setUser((prev) => (next ? { ...next, name: prev?.email === next.email ? prev.name : next.name } : null));
+      if (next) startSyncLoop();
+    });
+    const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
+      const next = fromSession(session);
+      if (next) {
+        setUser((prev) => ({ ...next, name: prev?.email === next.email ? prev.name : next.name }));
+        startSyncLoop();
+      } else {
+        setUser(null);
+      }
+    });
+    return () => sub.subscription.unsubscribe();
+  }, []);
+
   // Keep the session in sync with whatever name we are actually showing.
   useEffect(() => {
     if (user) {
@@ -74,6 +105,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [user]);
 
   const login = async (email: string, password: string): Promise<boolean> => {
+    if (supabase) {
+      const { error } = await supabase.auth.signInWithPassword({ email: email.trim(), password });
+      if (error) {
+        if (/confirm/i.test(error.message)) throw new Error('Confirm your email first: open the link we sent you, then sign in.');
+        if (/fetch|network/i.test(error.message)) throw new Error("Can't reach the sign-in server. Check your connection and try again.");
+        return false;
+      }
+      return true;
+    }
+
     const demoUser = DEMO_USERS.find((u) => u.email === email && u.password === password);
     if (demoUser) {
       setUser({ email: demoUser.email, name: demoUser.name });
@@ -91,6 +132,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const signup = async (email: string, password: string, name: string): Promise<boolean> => {
+    if (supabase) {
+      if (password.length < 6) throw new Error('Use a password of at least 6 characters.');
+      const { data, error } = await supabase.auth.signUp({
+        email: email.trim(),
+        password,
+        options: { data: { name: name.trim() }, emailRedirectTo: window.location.origin },
+      });
+      if (error) {
+        if (/registered|exists/i.test(error.message)) return false;
+        throw new Error(error.message);
+      }
+      if (!data.session) {
+        throw new Error('Account created. Open the confirmation link we emailed you, then sign in here.');
+      }
+      return true;
+    }
+
     const registeredUsers = JSON.parse(localStorage.getItem('jobpilot_registered_users') || '[]');
     if (registeredUsers.some((u: any) => u.email === email)) {
       return false;
@@ -102,7 +160,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return true;
   };
 
-  const logout = () => {
+  const logout = async () => {
+    if (supabase) {
+      // Push anything unsynced, then remove this device's copy so the next
+      // person to sign in here does not inherit it.
+      try {
+        await flushAndClearLocal();
+      } catch (e) {
+        console.warn('Could not sync before signing out:', e);
+      }
+      await supabase.auth.signOut();
+    }
     setUser(null);
     localStorage.removeItem(STORAGE_KEY);
   };
@@ -119,6 +187,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         user && u.email === user.email ? { ...u, name: trimmed } : u
       );
       localStorage.setItem('jobpilot_registered_users', JSON.stringify(nextUsers));
+
+      if (supabase) await supabase.auth.updateUser({ data: { name: trimmed } });
 
       const resume = await dbHelpers.getResume();
       if (resume?.id) {
