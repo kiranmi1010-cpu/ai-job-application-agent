@@ -468,6 +468,8 @@ async function polishAnswer(question: string, draft: string, profile: any) {
   const prompt = `You are editing a job candidate's own draft answer to an employer's question.
 The candidate's rule: keep the essence, keep their voice and their points, and do not make too many changes.
 Only fix grammar, spelling, punctuation and clarity, and tighten wording where it clearly helps.
+This goes to an employer, so replace chat-style words ("wanna", "gonna", "so in the..." openers, "any AI tool like") with their plain professional form, and make every sentence grammatically complete.
+Keep who does what exactly as the candidate meant it: if a sentence is ambiguous, choose the reading that fits the rest of the draft and do not change its meaning.
 Do not add new claims, experience, numbers, tools or examples that are not in the draft.
 Do not make it sound corporate or AI-written: no "leverage", "passionate", "Additionally", "In today's world", no em-dash flourishes.
 If the draft does not actually answer the question, keep it as close as possible and mention that in "notes".
