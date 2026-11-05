@@ -41,7 +41,30 @@ async function draftLetter(job, profile) {
   };
 }
 
+async function answerQuestions(questions, job, profile) {
+  const response = await fetch(`${API_BASE}/api/gemini`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'answer-questions', data: { profile, questions, job } }),
+  });
+  if (!response.ok) return { ok: false, error: `JobPilot API returned HTTP ${response.status}` };
+  const body = await response.json();
+  if (!body?.success) return { ok: false, error: body?.error || 'The AI returned no answers.' };
+  return { ok: true, answers: body.data?.answers || [] };
+}
+
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  if (message?.type === 'ANSWER_QUESTIONS') {
+    (async () => {
+      try {
+        const { profile = {} } = await chrome.storage.local.get('profile');
+        sendResponse(await answerQuestions(message.questions || [], message.job || {}, profile));
+      } catch (error) {
+        sendResponse({ ok: false, error: error?.message || String(error) });
+      }
+    })();
+    return true;
+  }
   if (message?.type === 'DRAFT_LETTER') {
     (async () => {
       try {

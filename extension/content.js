@@ -421,6 +421,103 @@ function fillApplication(profile) {
   return { filled, attached };
 }
 
+// --- screening questions ------------------------------------------------------
+//
+// Collects the questions on an application form (Indeed Smart Apply, Workday,
+// Greenhouse, ...) so the popup can draft answers, then writes the answers back.
+
+function questionText(field) {
+  const own = labelText(field);
+  if (own && own.length > 3) return own;
+  const group = field.closest('fieldset, [role="radiogroup"], [role="group"], .ia-Questions-item, [class*="question" i], .form-group, li');
+  if (group) {
+    const lab = group.querySelector('legend, label, [class*="label" i], [id*="label" i], h3, h4, p, span');
+    if (lab && text(lab).length > 3) return text(lab);
+  }
+  return field.getAttribute('aria-label') || field.placeholder || field.name || '';
+}
+
+const CONTACT = /\b(first name|last name|full name|your name|e-?mail|phone|mobile|city|postal|zip|address|password|captcha)\b/i;
+
+function listQuestions() {
+  const out = [];
+  const done = new Set();
+  let n = 0;
+  const fields = Array.from(document.querySelectorAll('input, textarea, select')).filter((f) => visible(f) && !f.disabled);
+  for (const field of fields) {
+    const type = field instanceof HTMLTextAreaElement ? 'textarea'
+      : field instanceof HTMLSelectElement ? 'select'
+      : (field.getAttribute('type') || 'text').toLowerCase();
+    if (['hidden', 'submit', 'button', 'file', 'password', 'search', 'image', 'reset'].includes(type)) continue;
+
+    if (type === 'radio' || type === 'checkbox') {
+      const groupKey = field.name || (field.closest('fieldset, [role="radiogroup"]') || {}).id || '';
+      if (!groupKey || done.has(groupKey)) continue;
+      done.add(groupKey);
+      const members = Array.from(document.querySelectorAll(`input[name="${CSS.escape(field.name)}"]`));
+      const group = field.closest('fieldset, [role="radiogroup"], [role="group"]') || field.parentElement?.parentElement;
+      const legend = group && group.querySelector('legend, [class*="label" i], h3, h4, p, span');
+      const question = text(legend) || questionText(field);
+      const options = members.map((m) => labelText(m) || m.value).filter(Boolean);
+      const id = 'q' + n++;
+      members.forEach((m) => m.setAttribute('data-jobpilot-q', id));
+      out.push({ id, question, type, options });
+      continue;
+    }
+
+    const question = questionText(field);
+    if (!question || CONTACT.test(question)) continue;
+    const id = 'q' + n++;
+    field.setAttribute('data-jobpilot-q', id);
+    out.push({
+      id,
+      question: question.slice(0, 400),
+      type: type === 'number' ? 'number' : type,
+      options: type === 'select' ? Array.from(field.options).map((o) => o.text.trim()).filter((t) => t && !/^select|^choose|^--/i.test(t)) : [],
+      current: field.value || '',
+    });
+  }
+  return out;
+}
+
+function answerQuestions(answers) {
+  let filled = 0;
+  for (const { id, answer } of answers || []) {
+    if (!answer) continue;
+    const els = Array.from(document.querySelectorAll(`[data-jobpilot-q="${id}"]`));
+    if (!els.length) continue;
+    const first = els[0];
+    const type = (first.getAttribute('type') || '').toLowerCase();
+    if (type === 'radio' || type === 'checkbox') {
+      const wanted = String(answer).split('|').map((a) => a.trim().toLowerCase()).filter(Boolean);
+      for (const el of els) {
+        const label = (labelText(el) || el.value).trim().toLowerCase();
+        const want = wanted.some((w) => label === w || label.startsWith(w) || w.startsWith(label));
+        if (want && !el.checked) {
+          el.click();
+          filled++;
+        }
+      }
+      continue;
+    }
+    if (first instanceof HTMLSelectElement) {
+      const opt = Array.from(first.options).find((o) => o.text.trim().toLowerCase() === String(answer).trim().toLowerCase())
+        || Array.from(first.options).find((o) => o.text.toLowerCase().includes(String(answer).toLowerCase()));
+      if (opt) {
+        first.value = opt.value;
+        first.dispatchEvent(new Event('change', { bubbles: true }));
+        filled++;
+      }
+      continue;
+    }
+    if (setValue(first, String(answer))) filled++;
+  }
+  return filled;
+}
+
+window.__jobpilotQuestions = listQuestions;
+window.__jobpilotAnswer = answerQuestions;
+
 // Lets the popup fill every frame (embedded Greenhouse/Lever forms live in iframes).
 window.__jobpilotFill = fillApplication;
 window.__jobpilotList = listJobs;
