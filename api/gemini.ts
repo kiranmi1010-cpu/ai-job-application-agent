@@ -428,6 +428,13 @@ Rules per question type:
 - "text" or "textarea": write in first person, specific and honest. Short-answer fields: one or two sentences. Textareas: 3 to 6 sentences.
 - Links (portfolio, work samples): only use links that appear in the profile.
 
+How to write a good open answer (this matters most):
+- Answer the exact question asked, in its own terms. Do not summarise the resume, and do not mention projects, tools or achievements that are not directly relevant to that question.
+- If the question asks how the candidate thinks, works or decides ("how do you...", "why...", "describe your approach", "be honest"), give a clear point of view and the reasoning behind it, then one concrete example from the profile that shows it. Process and judgement matter more than tool names.
+- If the question asks for an example or achievement, pick the single most relevant one from the profile and give its situation, what the candidate did, and the result with any numbers the profile states.
+- Sound like a thoughtful person talking, not a brochure: plain words, varied sentences, no filler such as "Additionally", "leverage", "passionate", "I am excited to", "in today's fast-paced world".
+- If the profile gives too little to answer the question well and honestly, still draft the best answer you can from what is there, and set "needs_input" to the specific detail the candidate should add to make it strong (e.g. "add a real example of a piece you wrote with AI help").
+
 Questions (JSON):
 ${JSON.stringify(list)}
 
