@@ -37,19 +37,57 @@ export interface JobMatchResult {
   recommendation: 'strong_apply' | 'consider' | 'skip';
 }
 
+export type GateResult = 'PASS' | 'FAIL' | 'FLAG';
+
 export interface JobFitAnalysis {
   overallFit: 'excellent' | 'good' | 'moderate' | 'poor';
   matchScore: number;
+  verdict?: string;
+  advice?: string;
+  gates?: Record<'eligibility' | 'language' | 'location', { result: GateResult; note: string }>;
+  dimensions?: Record<'technical' | 'experience' | 'culture' | 'career', { score: number; note: string }>;
   strengths: string[];
   gaps: string[];
+  stretches?: string[];
   tips: string[];
+  questionsForEmployer?: string[];
+  postingFlags?: string[];
   shouldApply: boolean;
   summary: string;
+}
+
+export interface InterviewPrep {
+  pitch: string;
+  starStories: Array<{
+    title: string;
+    competency: string;
+    situation: string;
+    task: string;
+    action: string;
+    result: string;
+    useFor: string[];
+  }>;
+  likelyQuestions: Array<{ question: string; why: string; approach: string }>;
+  toughQuestions: Array<{ question: string; approach: string }>;
+  questionsToAsk: string[];
+  researchBefore: string[];
+  postingFlags?: string[];
+}
+
+export interface JobPreferences {
+  desiredRoles?: string;
+  locationPreference?: string;
+  jobTypes?: string;
+  salaryRange?: string;
+  languages?: string;
+  workAuthorization?: string;
 }
 
 export interface EmailContent {
   subject: string;
   body: string;
+  stretches?: string[];
+  postingFlags?: string[];
 }
 
 async function callGemini<T>(action: string, data: any): Promise<GeminiResponse<T>> {
@@ -118,12 +156,24 @@ export async function generateThankYouWithGemini(
   return callGemini<EmailContent>('generate-thank-you', { resume, job, interviewerName });
 }
 
-// Analyze job fit using Gemini AI
+// Analyze job fit: gates (eligibility, language, location) plus four weighted
+// dimensions, following the ai-job-search evaluation framework.
 export async function analyzeJobFitWithGemini(
   resume: ParsedResumeData,
-  job: any
+  job: any,
+  preferences: JobPreferences = {}
 ): Promise<GeminiResponse<JobFitAnalysis>> {
-  return callGemini<JobFitAnalysis>('analyze-job-fit', { resume, job });
+  return callGemini<JobFitAnalysis>('analyze-job-fit', { resume, job, preferences });
+}
+
+// Interview prep pack: STAR stories from the resume, likely and tough questions,
+// and questions to ask the interviewer.
+export async function interviewPrepWithGemini(
+  resume: ParsedResumeData,
+  job: any,
+  preferences: JobPreferences = {}
+): Promise<GeminiResponse<InterviewPrep>> {
+  return callGemini<InterviewPrep>('interview-prep', { resume, job, preferences });
 }
 
 // Check if Gemini API is available
