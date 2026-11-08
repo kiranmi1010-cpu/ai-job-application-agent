@@ -1,6 +1,7 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { guardPosting, fencePosting } from './_lib/postingGuard';
+import { lintWriting, autoFix } from './_lib/writingLint';
 
 // Initialize Gemini client
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || '');
@@ -73,6 +74,60 @@ async function generateText(prompt: string): Promise<{ text: string; provider: s
   return { text: result.response.text(), provider: 'gemini' };
 }
 
+
+// ---------------------------------------------------------------------------
+// Writing models. Everything here is free-tier:
+// - WRITER_MODEL (default gemini-flash-latest) uses the same free GEMINI_API_KEY,
+//   but the full Flash model, which writes much better than Flash-Lite.
+// - GROQ_API_KEY (optional, free at console.groq.com, no card) adds a second
+//   writer, used when Gemini is rate-limited or down.
+// Analysis actions keep the fast, cheap model; only text a recruiter reads
+// goes through this chain.
+// ---------------------------------------------------------------------------
+const WRITER_MODEL = process.env.WRITER_MODEL || 'gemini-flash-latest';
+const GROQ_API_KEY = process.env.GROQ_API_KEY || '';
+const GROQ_MODEL = process.env.GROQ_MODEL || 'openai/gpt-oss-120b';
+
+async function callOpenAICompatible(baseUrl: string, apiKey: string, model: string, prompt: string, temperature: number) {
+  const response = await fetch(`${baseUrl}/chat/completions`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
+    body: JSON.stringify({ model, messages: [{ role: 'user', content: prompt }], temperature }),
+    signal: AbortSignal.timeout(25000),
+  });
+  if (!response.ok) {
+    const body = await response.text().catch(() => '');
+    throw new Error(`HTTP ${response.status}: ${body.slice(0, 200)}`);
+  }
+  const data: any = await response.json();
+  const content = data?.choices?.[0]?.message?.content;
+  if (!content) throw new Error('no content');
+  return String(content);
+}
+
+async function generateWriting(prompt: string, temperature = 0.7): Promise<{ text: string; provider: string }> {
+  const errors: string[] = [];
+  if (process.env.GEMINI_API_KEY) {
+    try {
+      const model = genAI.getGenerativeModel({ model: WRITER_MODEL, generationConfig: { temperature } });
+      const result = await model.generateContent(prompt);
+      return { text: result.response.text(), provider: `gemini:${WRITER_MODEL}` };
+    } catch (error: any) {
+      errors.push(`gemini ${WRITER_MODEL}: ${error?.message || error}`);
+    }
+  }
+  if (GROQ_API_KEY) {
+    try {
+      const text = await callOpenAICompatible('https://api.groq.com/openai/v1', GROQ_API_KEY, GROQ_MODEL, prompt, temperature);
+      return { text, provider: `groq:${GROQ_MODEL}` };
+    } catch (error: any) {
+      errors.push(`groq ${GROQ_MODEL}: ${error?.message || error}`);
+    }
+  }
+  if (errors.length) console.error('Writer chain fell back to the default model:', errors.join(' | '));
+  return generateText(prompt);
+}
+
 const stripFences = (value: string) => value.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -99,6 +154,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       model: activeProvider() === 'omniroute' ? OMNIROUTE_MODEL : MODEL,
       omniroute_configured: Boolean(OMNIROUTE_BASE_URL),
       gemini_configured: Boolean(process.env.GEMINI_API_KEY),
+      writer_model: WRITER_MODEL,
+      groq_configured: Boolean(GROQ_API_KEY),
     });
   }
 
@@ -127,7 +184,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         result = await matchJobs(data.resume, data.jobs);
         break;
       case 'generate-cover-letter':
-        result = await generateCoverLetter(data.resume, data.job);
+        result = await generateCoverLetter(data.resume, data.job, {
+          notes: data.notes || '',
+          voice: data.voice || '',
+          preferences: data.preferences || {},
+        });
         break;
       case 'generate-follow-up':
         result = await generateFollowUp(data.resume, data.job, data.daysSinceApplication);
@@ -310,48 +371,126 @@ ${fencePosting('JOB POSTING', guarded.text || 'Not provided')}`;
   return { text, flags: guarded.flags };
 }
 
-// Generate cover letter using the configured provider
-async function generateCoverLetter(resume: any, job: any) {
-  const posting = postingBlock(job);
-  const prompt = `You are an expert career coach writing a cover letter email for a real job application. It is sent under the candidate's name, so honesty matters more than polish.
+function voiceBlock(voice: string): string {
+  const sample = String(voice || '').trim().slice(0, 2500);
+  if (!sample) return '';
+  return `
+The candidate's own writing (match this voice: sentence length, vocabulary, directness. Copy the style, never the content):
+"""${sample}"""
+`;
+}
 
-Candidate:
+function notesBlock(notes: string): string {
+  const n = String(notes || '').trim().slice(0, 2500);
+  if (!n) return '';
+  return `
+The candidate's own points for THIS letter (build the letter around these, keep their wording where it works, and do not drop any of them):
+"""${n}"""
+`;
+}
+
+const parseJson = (raw: string) => JSON.parse(stripFences(raw));
+
+// Cover letter: a drafter and an editor, as in ai-job-search's /apply pipeline.
+// 1. Draft with the writer model.  2. Lint in code.  3. An editor pass critiques
+// the draft against the posting, the resume and the rules (plus every lint issue
+// by name) and rewrites it.  4. Final lint and safe auto-fixes.
+async function generateCoverLetter(resume: any, job: any, opts: { notes?: string; voice?: string; preferences?: any } = {}) {
+  const posting = postingBlock(job);
+  const context = `Candidate:
 Email: ${resume?.email || ''} | Phone: ${resume?.phone || ''}
 ${candidateBlock(resume)}
 
+Candidate preferences:
+${preferencesBlock(opts.preferences || {})}
+
 Job:
 ${posting.text}
+${notesBlock(opts.notes || '')}${voiceBlock(opts.voice || '')}`;
+
+  const draftPrompt = `You are an expert career writer drafting a cover letter email for a real application. It is sent under the candidate's name, so it must be true and sound like a person, not an AI.
+
+${context}
 
 ${WRITING_RULES}
 
+Before writing, silently decide:
+- the 2 or 3 things this employer most needs, read from the posting;
+- for each, the single most relevant proof from the candidate's experience (with numbers if the resume has them).
+Then write.
+
 Structure:
 - Subject line formula: [candidate's title or degree] + [a relevant keyword from the posting]. Not "Application for X position".
-- Opening (2-3 sentences): the role, and an immediate, specific link between the candidate's background and this role. No template opener.
-- Why this company / role (early, 2-3 sentences): based only on what the posting says.
-- Body: forward-looking. Which of the employer's tasks the candidate can solve and how (methods, tools, approach), backed by 1-2 concrete past examples with the numbers the resume states. 3-4 short bullets are fine for skills or results.
-- Closing: brief and confident, e.g. "I would welcome the chance to discuss...". No begging.
-- Under 300 words. Sign off with the candidate's name and contact details.
+- Opening (2-3 sentences): the role, and a specific link between the candidate's background and this employer's need. Never open with "I am writing to".
+- Why this role / company (2-3 sentences), based only on the posting.
+- Body: forward-looking. Which of the employer's needs the candidate can meet and how, each backed by one concrete proof. Short bullets are allowed for results.
+- Closing: one or two confident sentences. No begging.
+- 180 to 280 words. Sign off with the candidate's name, email and phone.
 - Write in the language of the posting.
 
-Return ONLY valid JSON:
-{
-  "subject": "the subject line",
-  "body": "The full email body text",
-  "stretches": ["any sentence that reframes experience close to the limit, and why (empty array if none)"]
-}
+Return ONLY valid JSON: {"subject": "...", "body": "..."}`;
 
-No markdown, no explanations, just the JSON.`;
-
-  const { text: raw, provider } = await generateText(prompt);
-  const cleaned = stripFences(raw);
-
+  const draftRun = await generateWriting(draftPrompt, 0.7);
+  let draft: any;
   try {
-    const parsed = JSON.parse(cleaned);
-    if (parsed?.body) parsed.body = String(parsed.body).replace(/\s*—\s*/g, ', ');
-    return { success: true, data: { ...parsed, postingFlags: posting.flags }, provider };
-  } catch (e) {
-    return { success: false, error: 'Failed to parse AI response', raw: cleaned, provider };
+    draft = parseJson(draftRun.text);
+  } catch {
+    return { success: false, error: 'Failed to parse AI response', raw: stripFences(draftRun.text), provider: draftRun.provider };
   }
+  if (!draft?.body) return { success: false, error: 'The AI returned no letter', provider: draftRun.provider };
+
+  const lint = lintWriting(draft.body);
+  const editPrompt = `You are a demanding hiring manager and editor. Review this cover letter draft, then rewrite it so it would make you want to interview the candidate.
+
+${context}
+
+Draft subject: ${draft.subject || ''}
+Draft:
+"""${draft.body}"""
+
+Automatic checks found these problems (fix every one):
+${lint.issues.length ? lint.issues.map((i) => '- ' + i).join('\n') : '- none'}
+
+Review against:
+1. Truth: every claim is supported by the resume or the candidate's own points. Remove or soften anything that is not. Never add new facts.
+2. Specificity: replace any sentence that could appear in any other candidate's letter with a concrete detail from this candidate's experience tied to this posting.
+3. Relevance: the letter answers the 2-3 things this employer most needs. Cut anything that does not.
+4. Voice: plain, confident, human. ${opts.voice ? "Match the candidate's own writing sample." : ''} Vary sentence length and openings.
+5. ${WRITING_RULES}
+6. 180 to 280 words, subject line follows [title or degree] + [posting keyword].
+${opts.notes ? "7. All of the candidate's own points are still in the letter." : ''}
+
+Return ONLY valid JSON:
+{"subject": "...", "body": "the rewritten letter", "changes": ["the main improvements you made, short"], "stretches": ["any remaining sentence that stretches the candidate's experience, and why (empty if none)"]}`;
+
+  let final: any = draft;
+  let provider = draftRun.provider;
+  try {
+    const editRun = await generateWriting(editPrompt, 0.4);
+    const edited = parseJson(editRun.text);
+    if (edited?.body) {
+      final = edited;
+      provider = `${draftRun.provider} + editor ${editRun.provider}`;
+    }
+  } catch (error: any) {
+    console.error('Editor pass failed, returning the draft:', error?.message || error);
+  }
+
+  const body = autoFix(final.body);
+  const remaining = lintWriting(body);
+  return {
+    success: true,
+    data: {
+      subject: autoFix(final.subject || draft.subject || ''),
+      body,
+      changes: Array.isArray(final.changes) ? final.changes.slice(0, 6) : [],
+      stretches: Array.isArray(final.stretches) ? final.stretches : [],
+      lintIssues: remaining.issues,
+      wordCount: remaining.wordCount,
+      postingFlags: posting.flags,
+    },
+    provider,
+  };
 }
 
 // Generate follow-up email
@@ -375,7 +514,7 @@ Return ONLY valid JSON:
   "body": "The email body"
 }`;
 
-  const { text: raw, provider } = await generateText(prompt);
+  const { text: raw, provider } = await generateWriting(prompt, 0.5);
   const cleaned = stripFences(raw);
 
   try {
@@ -406,7 +545,7 @@ Return ONLY valid JSON:
   "body": "The email body"
 }`;
 
-  const { text: raw, provider } = await generateText(prompt);
+  const { text: raw, provider } = await generateWriting(prompt, 0.5);
   const cleaned = stripFences(raw);
 
   try {
@@ -565,7 +704,7 @@ Return ONLY valid JSON:
 }
 Give 6-8 likelyQuestions and 3-4 toughQuestions.`;
 
-  const { text: raw, provider } = await generateText(prompt);
+  const { text: raw, provider } = await generateWriting(prompt, 0.5);
   const cleaned = stripFences(raw);
   try {
     const parsed = JSON.parse(cleaned);
@@ -624,11 +763,14 @@ ${JSON.stringify(list)}
 Return ONLY valid JSON, no markdown:
 {"answers":[{"id":"<id>","answer":"<text>","needs_input":"<empty string or what is missing>"}]}`;
 
-  const { text: raw, provider } = await generateText(prompt);
+  const { text: raw, provider } = await generateWriting(prompt, 0.5);
   const cleaned = stripFences(raw);
   try {
     const parsed = JSON.parse(cleaned);
-    const answers = Array.isArray(parsed?.answers) ? parsed.answers : [];
+    const answers = (Array.isArray(parsed?.answers) ? parsed.answers : []).map((a: any) => ({
+      ...a,
+      answer: autoFix(String(a?.answer || '')),
+    }));
     return { success: true, data: { answers }, provider };
   } catch (e) {
     return { success: false, error: 'Failed to parse AI response', raw: cleaned, provider };
@@ -661,14 +803,14 @@ Candidate's draft:
 Return ONLY valid JSON, no markdown:
 {"polished":"<the lightly edited answer>","changes":["<each change, short: what changed and why>"],"notes":"<empty, or one short suggestion the candidate may want to consider>"}`;
 
-  const { text: raw, provider } = await generateText(prompt);
+  const { text: raw, provider } = await generateWriting(prompt, 0.5);
   const cleaned = stripFences(raw);
   try {
     const parsed = JSON.parse(cleaned);
     return {
       success: true,
       data: {
-        polished: String(parsed.polished || text),
+        polished: autoFix(String(parsed.polished || text)),
         changes: Array.isArray(parsed.changes) ? parsed.changes.slice(0, 8) : [],
         notes: String(parsed.notes || ''),
       },

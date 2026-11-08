@@ -78,6 +78,8 @@ export interface Settings {
   autoSearchFromResume: boolean;
   skillBasedMatching: boolean;
   experienceLevelMatching: boolean;
+  writingSample?: string;
+  languages?: string;
 }
 
 class JobPilotDatabase extends Dexie {

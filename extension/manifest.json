@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "JobPilot Assist",
-  "version": "1.5.0",
-  "description": "Read the job you are viewing on any job board or company careers page, draft a tailored cover letter, and fill the application form, resume included.",
+  "version": "1.6.0",
+  "description": "Spots the job you are viewing, pops up with an AI fit check, drafts a tailored cover letter in your voice, and fills the application form, resume included.",
   "permissions": [
     "storage",
     "activeTab",
@@ -76,10 +76,30 @@
         "https://smartapply.indeed.com/*"
       ],
       "js": [
-        "content.js"
+        "content.js",
+        "launcher.js"
       ],
       "run_at": "document_idle",
       "all_frames": true
     }
-  ]
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "popup.html",
+        "popup.js"
+      ],
+      "matches": [
+        "<all_urls>"
+      ]
+    }
+  ],
+  "commands": {
+    "toggle-panel": {
+      "suggested_key": {
+        "default": "Alt+J"
+      },
+      "description": "Open or close the JobPilot panel on this page"
+    }
+  }
 }
