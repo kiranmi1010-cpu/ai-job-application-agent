@@ -35,6 +35,8 @@ export default function Settings() {
   const [autoSearchFromResume, setAutoSearchFromResume] = useState(true);
   const [skillBasedMatching, setSkillBasedMatching] = useState(true);
   const [experienceLevelMatching, setExperienceLevelMatching] = useState(true);
+  const [writingSample, setWritingSample] = useState('');
+  const [languages, setLanguages] = useState('');
   const [saved, setSaved] = useState(false);
   const [loading, setLoading] = useState(true);
 
@@ -63,6 +65,8 @@ export default function Settings() {
         setAutoSearchFromResume(settings.autoSearchFromResume);
         setSkillBasedMatching(settings.skillBasedMatching);
         setExperienceLevelMatching(settings.experienceLevelMatching);
+        setWritingSample(settings.writingSample || '');
+        setLanguages(settings.languages || '');
       }
     } catch (error) {
       console.error('Error loading settings:', error);
@@ -89,7 +93,9 @@ export default function Settings() {
         searchFrequency,
         autoSearchFromResume,
         skillBasedMatching,
-        experienceLevelMatching
+        experienceLevelMatching,
+        writingSample,
+        languages,
       });
       
       setSaved(true);
@@ -417,6 +423,26 @@ export default function Settings() {
           <p className="text-sm text-slate-500">Additional filters for AI job search</p>
         </div>
         <div className="p-5 space-y-4">
+          <div>
+            <label className="text-xs font-medium text-slate-500 uppercase mb-1 block">Your writing sample</label>
+            <textarea
+              value={writingSample}
+              onChange={(e) => setWritingSample(e.target.value)}
+              rows={5}
+              placeholder="Paste a paragraph or two you wrote yourself (a LinkedIn post, an email, an answer you liked). Cover letters and answers will copy your style."
+              className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
+            />
+          </div>
+          <div>
+            <label className="text-xs font-medium text-slate-500 uppercase mb-1 block">Languages you speak</label>
+            <input
+              type="text"
+              value={languages}
+              onChange={(e) => setLanguages(e.target.value)}
+              placeholder="English (fluent), Hindi, Kannada"
+              className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
+            />
+          </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label className="text-xs font-medium text-slate-500 uppercase mb-1 block">Desired Roles</label>

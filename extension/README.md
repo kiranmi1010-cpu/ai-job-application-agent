@@ -19,6 +19,26 @@ fills the form. You press submit — nothing is submitted for you.
 - **Company careers pages:** Greenhouse, Lever, Ashby, Workday, SmartRecruiters, Workable, Freshteam, Keka, Darwinbox, Zoho Recruit (forms embedded in an iframe included).
 - **Any other site:** click the icon and it injects itself into that tab.
 
+## Floating launcher (new in 1.6)
+
+You no longer need to click the toolbar icon. On job boards and careers pages a
+purple **JP** button appears in the bottom-right corner when JobPilot spots a job
+or an application form, and the first time you open each job a small card pops up
+with an AI fit check (score, verdict, why). The score also shows on the button.
+
+- **Open JobPilot** (or click the JP button, or press **Alt+J**) opens the full panel
+  inside the page.
+- Turn the automatic pop-up or the automatic fit check off under **Your details**.
+- Fit checks are cached for a week per job, so they do not use up free AI requests.
+
+## Better letters
+
+- **Your points for this letter**: jot 2-3 things you want to say in your own words.
+  The letter is built around them.
+- **A sample of your own writing** (in Your details): letters copy your style.
+- Every letter is drafted, then reviewed and rewritten by a second "editor" pass,
+  and lines that stretch your experience are flagged for you to keep, soften or drop.
+
 ## Use
 
 1. Open a posting or an application form.
@@ -50,5 +70,6 @@ is the part worth automating.
 |---|---|
 | `manifest.json` | Manifest V3; boards and common ATS hosts get the script automatically, other sites through `activeTab` |
 | `content.js` | Extracts the posting; fills fields on request |
+| `launcher.js` | Floating JP button, auto pop-up card and in-page panel |
 | `background.js` | Calls `/api/gemini` for the cover letter |
 | `popup.html` / `popup.js` | The panel you click |

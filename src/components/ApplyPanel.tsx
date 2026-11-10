@@ -26,19 +26,23 @@ import {
 
 type Tab = 'letter' | 'fit' | 'interview';
 
-async function loadPreferences(): Promise<JobPreferences> {
+async function loadSettings(): Promise<any> {
   try {
-    const s: any = await dbHelpers.getSettings();
-    if (!s) return {};
-    return {
-      desiredRoles: s.desiredRoles,
-      locationPreference: s.locationPreference,
-      jobTypes: s.jobTypes,
-      salaryRange: s.salaryRange,
-    };
+    return (await dbHelpers.getSettings()) || {};
   } catch {
     return {};
   }
+}
+
+async function loadPreferences(): Promise<JobPreferences> {
+  const s = await loadSettings();
+  return {
+    desiredRoles: s.desiredRoles,
+    locationPreference: s.locationPreference,
+    jobTypes: s.jobTypes,
+    salaryRange: s.salaryRange,
+    languages: s.languages,
+  };
 }
 
 const gateStyle: Record<string, string> = {
@@ -116,6 +120,7 @@ export default function ApplyPanel({ job, onClose, onDone }: Props) {
   const [copied, setCopied] = useState<string | null>(null);
   const [existing, setExisting] = useState<any | null>(null);
   const [tab, setTab] = useState<Tab>('letter');
+  const [notes, setNotes] = useState('');
   const [stretches, setStretches] = useState<string[]>([]);
   const [postingFlags, setPostingFlags] = useState<string[]>([]);
   const [fit, setFit] = useState<JobFitAnalysis | null>(null);
@@ -179,7 +184,12 @@ export default function ApplyPanel({ job, onClose, onDone }: Props) {
         setError('No parsed resume found, so a generic letter was drafted. Upload a resume to get a tailored one.');
         return;
       }
-      const result = await generateCoverLetterWithGemini(resume.parsedData, job);
+      const settings = await loadSettings();
+      const result = await generateCoverLetterWithGemini(resume.parsedData, job, {
+        notes,
+        voice: settings.writingSample || '',
+        preferences: await loadPreferences(),
+      });
       if (result.success && result.data?.body) {
         setCoverLetter(result.data.body);
         if (result.data.subject) setSubject(result.data.subject);
@@ -479,6 +489,18 @@ export default function ApplyPanel({ job, onClose, onDone }: Props) {
 
           {tab === 'letter' && (
           <>
+          <div>
+            <label className="text-xs font-medium text-slate-500 uppercase mb-1.5 block">
+              Your points for this letter (optional)
+            </label>
+            <textarea
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              rows={3}
+              placeholder="Jot the 2-3 things you want to say, in your own words. The letter is built around them."
+              className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+            />
+          </div>
           <div className="flex flex-wrap gap-2">
             <button
               onClick={generate}
@@ -486,7 +508,7 @@ export default function ApplyPanel({ job, onClose, onDone }: Props) {
               className="flex items-center gap-2 px-4 py-2.5 bg-gradient-to-r from-blue-600 to-purple-600 text-white rounded-xl text-sm font-medium hover:opacity-90 disabled:opacity-50"
             >
               {loading ? <Loader2 size={16} className="animate-spin" /> : <Sparkles size={16} />}
-              {loading ? 'Drafting…' : coverLetter ? 'Redraft letter' : 'Draft cover letter'}
+              {loading ? 'Drafting and editing… (~15s)' : coverLetter ? 'Redraft letter' : 'Draft cover letter'}
             </button>
             <button
               onClick={openAndCopy}

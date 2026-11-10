@@ -20,3 +20,22 @@ is now in JobPilot's AI endpoint (`api/gemini.ts`):
    them for the career-alignment score and the location gate.
 2. Open any job's Apply panel and use the three tabs: **Cover letter**, **Check fit**,
    **Interview prep**.
+
+## Writing engine (all free)
+
+Text a recruiter reads (cover letters, form answers, polish, follow-ups, interview
+prep) now goes through a separate writer chain in `api/gemini.ts`:
+
+1. **Gemini Flash** (`WRITER_MODEL`, default `gemini-flash-latest`) on the same free
+   `GEMINI_API_KEY`. It writes far better than Flash-Lite, which stays in use for the
+   fast analysis jobs (matching, fit checks).
+2. **Groq** (optional, free, no card): add `GROQ_API_KEY` in Vercel and it takes over
+   when Gemini is rate-limited. Default model `openai/gpt-oss-120b`; change with
+   `GROQ_MODEL`.
+
+Cover letters are written in two passes, like ai-job-search's drafter and reviewer:
+a draft, then an editor pass that checks truth, specificity and relevance and
+rewrites. `api/_lib/writingLint.ts` catches banned phrases, em-dashes and length in
+code and hands each problem to the editor by name. Letters can be built around
+**your own points** and copy **your writing sample** (Settings, or Your details in
+the extension).

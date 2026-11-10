@@ -40,7 +40,19 @@ const ui = {
   fillAnswers: el('fillAnswersBtn'),
   rank: el('rankBtn'),
   ranked: el('ranked'),
+  notes: el('notes'),
+  voice: el('voice'),
+  languages: el('languages'),
+  autoPop: el('autoPop'),
+  autoFit: el('autoFit'),
+  aiFit: el('aiFit'),
+  stretches: el('stretches'),
 };
+
+// Opened inside the page by the floating launcher (an iframe), rather than
+// from the toolbar icon.
+const EMBEDDED = new URLSearchParams(location.search).has('embedded');
+if (EMBEDDED) document.body.classList.add('embedded');
 
 let currentJob = null;
 let currentTabId = null;
@@ -51,6 +63,10 @@ function setStatus(message, kind) {
 }
 
 async function getActiveTab() {
+  if (EMBEDDED) {
+    const own = await chrome.tabs.getCurrent().catch(() => null);
+    if (own?.id) return own;
+  }
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   return tab || null;
 }
@@ -330,8 +346,38 @@ async function renderJob(job) {
     ui.fitLabel.textContent = fit.score >= 60 ? 'Good match' : fit.score >= 35 ? 'Partial match' : 'Weak match';
     ui.fitNote.textContent = `${fit.have.length} of ${fit.have.length + fit.gaps.length} skills this job mentions`;
   }
+  showAiFit(job);
   ui.matched.innerHTML = fit.have.map((t) => chip(t, 'have')).join('') || '<span class="muted">None of your listed skills yet</span>';
   ui.missing.innerHTML = fit.gaps.map((t) => chip(t, 'gap')).join('') || '<span class="muted">Nothing extra</span>';
+}
+
+const escHtml = (v) => String(v ?? '').replace(/[<>&"]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
+
+async function showAiFit(job) {
+  ui.aiFit.classList.remove('hidden', 'fail');
+  ui.aiFit.textContent = 'AI fit check running…';
+  try {
+    const result = await chrome.runtime.sendMessage({ type: 'FIT_CHECK', job });
+    if (currentJob && currentJob.title !== job.title) return;
+    if (!result?.ok) {
+      ui.aiFit.textContent = result?.needsProfile
+        ? 'Fill in "Your details" below to get an AI fit check.'
+        : `AI fit check unavailable: ${result?.error || 'no response'}`;
+      return;
+    }
+    const f = result.fit;
+    const failed = f.verdict === 'Do not apply';
+    if (failed) ui.aiFit.classList.add('fail');
+    const flags = (f.postingFlags || []).length
+      ? `<div style="margin-top:4px;color:#b91c1c">⚠ This posting has hidden text or AI instructions. They were ignored; check it is genuine.</div>`
+      : '';
+    ui.aiFit.innerHTML = `<b>AI fit: ${failed ? 'skip' : escHtml(f.matchScore) + '/100'} · ${escHtml(f.verdict)}</b>
+      <div>${escHtml(f.advice || '')}</div>
+      ${f.strengths?.length ? `<div style="margin-top:4px">+ ${f.strengths.map(escHtml).join('<br>+ ')}</div>` : ''}
+      ${f.gaps?.length ? `<div style="margin-top:4px">− ${f.gaps.map(escHtml).join('<br>− ')}</div>` : ''}${flags}`;
+  } catch (error) {
+    ui.aiFit.textContent = `AI fit check unavailable: ${error?.message || error}`;
+  }
 }
 
 async function readPage() {
@@ -371,11 +417,17 @@ async function readPage() {
 async function draftLetter() {
   if (!currentJob) return;
   ui.draft.disabled = true;
-  setStatus('Drafting with Gemini…');
+  setStatus('Drafting, then editing… (about 15 seconds)');
+  ui.stretches.innerHTML = '';
   try {
-    const response = await chrome.runtime.sendMessage({ type: 'DRAFT_LETTER', job: currentJob });
+    const response = await chrome.runtime.sendMessage({ type: 'DRAFT_LETTER', job: currentJob, notes: ui.notes.value.trim() });
     if (response?.ok) {
       ui.letter.value = response.letter;
+      if (response.stretches?.length) {
+        ui.stretches.innerHTML = `<div class="stretch"><b>Check before sending, these stretch your experience:</b><br>• ${response.stretches
+          .map(escHtml)
+          .join('<br>• ')}<br>Keep, soften or drop each one.</div>`;
+      }
       ui.copy.disabled = false;
       setStatus('Letter drafted. Review it, then copy or fill the form.', 'ok');
     } else {
@@ -435,6 +487,11 @@ async function loadProfile() {
   ui.city.value = profile.city || '';
   ui.company.value = profile.company || '';
   ui.portfolio.value = profile.portfolio || '';
+  ui.voice.value = profile.voice || '';
+  ui.languages.value = profile.languages || '';
+  const { launcher = {} } = await chrome.storage.local.get('launcher');
+  ui.autoPop.checked = launcher.autoPop !== false;
+  ui.autoFit.checked = launcher.autoFit !== false;
   const { resume } = await chrome.storage.local.get('resume');
   ui.resumeName.textContent = resume?.name ? `Saved: ${resume.name}` : 'No resume saved yet.';
 }
@@ -451,9 +508,14 @@ async function saveProfile() {
     city: ui.city.value.trim(),
     company: ui.company.value.trim(),
     portfolio: ui.portfolio.value.trim(),
+    voice: ui.voice.value.trim(),
+    languages: ui.languages.value.trim(),
   };
   try {
-    await chrome.storage.local.set({ profile });
+    await chrome.storage.local.set({
+      profile,
+      launcher: { autoPop: ui.autoPop.checked, autoFit: ui.autoFit.checked },
+    });
   } catch (error) {
     ui.saveProfile.textContent = 'Could not save: ' + (error?.message || error);
     return;
@@ -497,6 +559,11 @@ ui.resumeFile.addEventListener('change', () => {
 });
 ui.letter.addEventListener('input', () => {
   ui.copy.disabled = !ui.letter.value.trim();
+});
+
+// The launcher asks the embedded panel to re-read when it is reopened.
+window.addEventListener('message', (event) => {
+  if (event.data?.type === 'JOBPILOT_REREAD') readPage();
 });
 
 loadProfile().then(readPage);

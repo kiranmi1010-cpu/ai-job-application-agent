@@ -87,6 +87,8 @@ export interface EmailContent {
   subject: string;
   body: string;
   stretches?: string[];
+  changes?: string[];
+  lintIssues?: string[];
   postingFlags?: string[];
 }
 
@@ -131,11 +133,14 @@ export async function matchJobsWithGemini(
 }
 
 // Generate cover letter using Gemini AI
+// Drafted, then reviewed and rewritten by an editor pass on the server.
+// notes: the candidate's own points for this letter; voice: a sample of their writing.
 export async function generateCoverLetterWithGemini(
   resume: ParsedResumeData,
-  job: any
+  job: any,
+  opts: { notes?: string; voice?: string; preferences?: JobPreferences } = {}
 ): Promise<GeminiResponse<EmailContent>> {
-  return callGemini<EmailContent>('generate-cover-letter', { resume, job });
+  return callGemini<EmailContent>('generate-cover-letter', { resume, job, ...opts });
 }
 
 // Generate follow-up email using Gemini AI
