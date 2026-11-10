@@ -28,6 +28,11 @@ const ui = {
   skills: el('skills'),
   linkedin: el('linkedin'),
   city: el('city'),
+  currentCtc: el('currentCtc'),
+  expectedCtc: el('expectedCtc'),
+  notice: el('notice'),
+  autoChat: el('autoChat'),
+  geminiKey: el('geminiKey'),
   company: el('company'),
   portfolio: el('portfolio'),
   resumeFile: el('resumeFile'),
@@ -40,6 +45,9 @@ const ui = {
   fillAnswers: el('fillAnswersBtn'),
   rank: el('rankBtn'),
   ranked: el('ranked'),
+  deep: el('deepBtn'),
+  deepOut: el('deep'),
+  minPay: el('minPay'),
   notes: el('notes'),
   voice: el('voice'),
   languages: el('languages'),
@@ -171,6 +179,7 @@ async function rankPage() {
     const ranked = jobs
       .map((job) => ({ ...job, score: scoreListing(job, profile) }))
       .sort((a, b) => b.score - a.score);
+    lastRanked = ranked;
     const color = (s) => (s >= 60 ? '#059669' : s >= 35 ? '#7c3aed' : '#94a3b8');
     ui.ranked.innerHTML = ranked
       .map(
@@ -492,6 +501,13 @@ async function loadProfile() {
   const { launcher = {} } = await chrome.storage.local.get('launcher');
   ui.autoPop.checked = launcher.autoPop !== false;
   ui.autoFit.checked = launcher.autoFit !== false;
+  ui.currentCtc.value = profile.currentCtc || '';
+  ui.expectedCtc.value = profile.expectedCtc || '';
+  ui.notice.value = profile.notice || '';
+  ui.minPay.value = profile.minPay || '';
+  ui.autoChat.checked = profile.autoChat !== false;
+  const { geminiKey = '' } = await chrome.storage.local.get('geminiKey');
+  ui.geminiKey.value = geminiKey;
   const { resume } = await chrome.storage.local.get('resume');
   ui.resumeName.textContent = resume?.name ? `Saved: ${resume.name}` : 'No resume saved yet.';
 }
@@ -508,12 +524,18 @@ async function saveProfile() {
     city: ui.city.value.trim(),
     company: ui.company.value.trim(),
     portfolio: ui.portfolio.value.trim(),
+    currentCtc: ui.currentCtc.value.trim(),
+    expectedCtc: ui.expectedCtc.value.trim(),
+    notice: ui.notice.value.trim(),
+    minPay: ui.minPay.value.trim(),
+    autoChat: ui.autoChat.checked,
     voice: ui.voice.value.trim(),
     languages: ui.languages.value.trim(),
   };
   try {
     await chrome.storage.local.set({
       profile,
+      geminiKey: ui.geminiKey.value.trim(),
       launcher: { autoPop: ui.autoPop.checked, autoFit: ui.autoFit.checked },
     });
   } catch (error) {
@@ -540,6 +562,53 @@ ui.copy.addEventListener('click', copyLetter);
 ui.fill.addEventListener('click', fillForm);
 ui.saveProfile.addEventListener('click', saveProfile);
 ui.rank.addEventListener('click', rankPage);
+
+let lastRanked = [];
+const esc = (v) => String(v || '').replace(/[<>&"]/g, '');
+
+function renderDeep(state) {
+  if (!state) return;
+  if (state.status === 'reading') {
+    ui.deepOut.innerHTML = `<span class="muted">Reading job ${state.done + 1} of ${state.total} (opening each one in the background)…</span>`;
+  } else if (state.status === 'judging') {
+    ui.deepOut.innerHTML = '<span class="muted">Checking experience, pay and fit…</span>';
+  } else if (state.status === 'error') {
+    ui.deepOut.innerHTML = `<span class="muted">Could not finish: ${esc(state.error)}</span>`;
+  } else if (state.status === 'done') {
+    const col = { good: '#059669', maybe: '#d97706', skip: '#94a3b8' };
+    const label = { good: 'Apply', maybe: 'Maybe', skip: 'Skip' };
+    ui.deepOut.innerHTML = state.results.map((r, i) => `<button class="rjob" data-u="${esc(r.url)}" title="${esc(r.reason)}">
+        <span class="score" style="background:${col[r.verdict] || '#94a3b8'}">${label[r.verdict] || '?'}</span>
+        <span><b>${esc(r.title)}</b><small>${esc([r.company, r.pay, r.experience].filter(Boolean).join(' · '))}</small><small>${esc(r.reason)}</small></span>
+      </button>`).join('');
+    ui.deepOut.querySelectorAll('.rjob').forEach((b) => b.addEventListener('click', () => chrome.tabs.create({ url: b.dataset.u })));
+    const good = state.results.filter((r) => r.verdict === 'good').length;
+    setStatus(`Deep check done: ${good} worth applying to. Open one, click Apply, and JP fills the questions.`, 'ok');
+  }
+}
+
+async function deepCheckPage() {
+  if (!lastRanked.length) await rankPage();
+  if (!lastRanked.length) return;
+  const jobs = lastRanked.filter((j) => j.score >= 30).slice(0, 12);
+  const pick = jobs.length ? jobs : lastRanked.slice(0, 12);
+  ui.deep.disabled = true;
+  await chrome.runtime.sendMessage({ type: 'DEEP_CHECK', jobs: pick });
+  renderDeep({ status: 'reading', done: 0, total: pick.length });
+}
+
+chrome.storage.onChanged.addListener((changes) => {
+  if (changes.deepCheck) {
+    renderDeep(changes.deepCheck.newValue);
+    if (['done', 'error'].includes(changes.deepCheck.newValue?.status)) ui.deep.disabled = false;
+  }
+});
+chrome.storage.local.get('deepCheck').then(({ deepCheck }) => {
+  renderDeep(deepCheck);
+  if (deepCheck && !['done', 'error'].includes(deepCheck.status)) ui.deep.disabled = true;
+});
+ui.deep.addEventListener('click', deepCheckPage);
+
 ui.answer.addEventListener('click', answerForm);
 ui.fillAnswers.addEventListener('click', fillAnswers);
 ui.resumeFile.addEventListener('change', () => {

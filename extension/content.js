@@ -1,7 +1,7 @@
 // Re-run when the extension was updated: an older copy left in the tab must
 // not stop the new version from loading.
-if (window.__jobpilotAssist !== '1.6.0') {
-window.__jobpilotAssist = '1.6.0';
+if (window.__jobpilotAssist !== '1.8.0') {
+window.__jobpilotAssist = '1.8.0';
 // JobPilot Assist — content script.
 //
 // Reads the posting you are looking at (schema.org JobPosting when the page
@@ -515,6 +515,153 @@ function answerQuestions(answers) {
     if (setValue(first, String(answer))) filled++;
   }
   return filled;
+}
+
+
+// --- Naukri recruiter-question chat ------------------------------------------
+//
+// Naukri asks screening questions one at a time in a chat drawer whose answer
+// box is a contenteditable div, so the normal form scan never sees it. This
+// watches the drawer, drafts an answer for each new question from your saved
+// details, and types it into the box. It never presses Save: you check the
+// answer and click Save yourself.
+
+const NK_MAX = 190; // Naukri silently rejects long chat answers
+
+function nkTrim(answer) {
+  let a = String(answer || '').replace(/\s+/g, ' ').trim();
+  if (a.length <= NK_MAX) return a;
+  a = a.slice(0, NK_MAX);
+  const cut = Math.max(a.lastIndexOf('. '), a.lastIndexOf('; '));
+  return (cut > 60 ? a.slice(0, cut + 1) : a.replace(/\s+\S*$/, '')).trim();
+}
+
+function nkNumber(v) {
+  const m = String(v || '').match(/\d+(\.\d+)?/);
+  return m ? m[0] : '';
+}
+
+// Answers that should come straight from your saved details, not the AI.
+function nkQuick(question, profile) {
+  const q = question.toLowerCase();
+  if (/current\s*(ctc|salary|package)/.test(q) && profile.currentCtc) return nkNumber(profile.currentCtc);
+  if (/expected\s*(ctc|salary|package)/.test(q) && profile.expectedCtc) return nkNumber(profile.expectedCtc);
+  if (/notice\s*period|join(ing)?\b|how soon|start date/.test(q) && profile.notice) return profile.notice;
+  return '';
+}
+
+function nkBadge(msg, tone) {
+  let b = document.getElementById('jobpilot-badge');
+  if (!b) {
+    b = document.createElement('div');
+    b.id = 'jobpilot-badge';
+    b.style.cssText = 'position:fixed;bottom:18px;left:18px;z-index:2147483647;max-width:320px;padding:10px 12px;border-radius:10px;font:13px/1.4 system-ui,sans-serif;color:#fff;box-shadow:0 4px 16px rgba(0,0,0,.25)';
+    document.body.appendChild(b);
+  }
+  b.style.background = tone === 'error' ? '#b91c1c' : tone === 'wait' ? '#475569' : '#6d28d9';
+  b.textContent = 'JP: ' + msg;
+}
+
+function nkOptions(drawer) {
+  // Radio/checkbox style answers shown as clickable options in the drawer.
+  const items = Array.from(drawer.querySelectorAll('input[type="radio"], input[type="checkbox"]'));
+  return items.map((el) => ({ el, label: (labelText(el) || el.value || '').trim() })).filter((o) => o.label);
+}
+
+let nkLastQuestion = '';
+let nkBusy = false;
+let nkJob = null;
+
+async function nkHandle() {
+  const drawer = document.querySelector('.chatbot_Drawer');
+  if (!drawer || nkBusy) return;
+  // Only act when the question chat is actually open on screen with its answer box.
+  const inputBox = drawer.querySelector('[contenteditable="true"]');
+  if (!visible(drawer) || (!inputBox && !drawer.querySelector('input[type="radio"], input[type="checkbox"]'))) return;
+  if (inputBox && !visible(inputBox)) return;
+  const bots = drawer.querySelectorAll('.botItem .botMsg, li.botItem');
+  const last = bots[bots.length - 1];
+  const question = text(last);
+  if (!question || question === nkLastQuestion) return;
+  if (!/\?|\bplease (enter|share|mention|specify)\b/i.test(question)) return;
+  if (/thank you for (your )?responses|thank you for showing interest/i.test(question) && !/\?/.test(question)) return;
+
+  const { profile = {} } = await chrome.storage.local.get('profile');
+  if (profile.autoChat === false) return;
+  nkLastQuestion = question;
+  nkBusy = true;
+  try {
+    if (!nkJob) nkJob = extractJob();
+    const options = nkOptions(drawer);
+    let answer = nkQuick(question, profile);
+    if (!answer) {
+      nkBadge('drafting an answer…', 'wait');
+      const res = await chrome.runtime.sendMessage({
+        type: 'ANSWER_QUESTIONS',
+        job: nkJob || {},
+        questions: [{
+          id: 'nk',
+          question: question + (options.length ? '' : ' (Answer in under 190 characters. If it asks for a number of years, reply with just the number.)'),
+          type: options.length ? 'radio' : 'text',
+          options: options.map((o) => o.label),
+        }],
+      });
+      if (!res?.ok) throw new Error(res?.error || 'no answer');
+      answer = (res.answers || [])[0]?.answer || '';
+    }
+    if (!answer) {
+      nkBadge('not sure how to answer this one from your details. Please type it yourself.', 'error');
+      return;
+    }
+
+    if (options.length) {
+      const want = String(answer).toLowerCase();
+      const pick = options.find((o) => o.label.toLowerCase() === want) || options.find((o) => want.includes(o.label.toLowerCase()));
+      if (pick) {
+        pick.el.closest('label, div')?.style.setProperty('outline', '3px solid #8b5cf6');
+        nkBadge(`suggests "${pick.label}". Click it if that's right.`);
+      } else {
+        nkBadge(`suggests: ${answer}`);
+      }
+      return;
+    }
+
+    const box = drawer.querySelector('[contenteditable="true"]');
+    if (!box) return;
+    // You started typing (or this question has already moved on): never overwrite you.
+    const stillSame = text(Array.from(drawer.querySelectorAll('.botItem .botMsg, li.botItem')).pop()) === question;
+    if (!stillSame) return;
+    if (text(box)) {
+      nkBadge('you are already answering this one, so I left it alone.');
+      return;
+    }
+    box.focus();
+    document.execCommand('selectAll', false, null);
+    const finalAnswer = nkTrim(answer);
+    document.execCommand('insertText', false, finalAnswer);
+    try { await navigator.clipboard.writeText(finalAnswer); } catch {}
+    nkBadge('filled the answer (also copied). Check it, then click Save. If Naukri rejects the application, clear the box and press Ctrl+V instead.');
+  } catch (error) {
+    nkLastQuestion = ''; // let it retry on the next change
+    nkBadge('could not draft an answer (' + (error?.message || error) + '). Type it yourself.', 'error');
+  } finally {
+    nkBusy = false;
+  }
+}
+
+if (location.hostname.endsWith('naukri.com') && window === window.top && /saveApply/.test(location.href) && /%22%3A406|":406/.test(location.href)) {
+  setTimeout(() => nkBadge('Naukri rejected this application. It usually blocks answers entered by a tool. Reopen the job, click Apply, and paste each answer yourself (JP copies each one for you).', 'error'), 1500);
+}
+
+if (location.hostname.endsWith('naukri.com') && window === window.top) {
+  // Throttle, not debounce: Naukri's page changes constantly (carousels, ads),
+  // so a debounce kept postponing the check. Check at most every 400 ms.
+  let pending = false;
+  new MutationObserver(() => {
+    if (pending) return;
+    pending = true;
+    setTimeout(() => { pending = false; nkHandle(); }, 400);
+  }).observe(document.documentElement, { childList: true, subtree: true });
 }
 
 window.__jobpilotQuestions = listQuestions;

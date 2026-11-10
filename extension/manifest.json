@@ -1,16 +1,18 @@
 {
   "manifest_version": 3,
   "name": "JobPilot Assist",
-  "version": "1.6.0",
-  "description": "Spots the job you are viewing, pops up with an AI fit check, drafts a tailored cover letter in your voice, and fills the application form, resume included.",
+  "version": "1.8.0",
+  "description": "Spots the job you are viewing, pops up with an AI fit check, drafts letters and screening answers in your voice, and fills the application form, resume included.",
   "permissions": [
     "storage",
     "activeTab",
     "clipboardWrite",
-    "scripting"
+    "scripting",
+    "tabs"
   ],
   "host_permissions": [
     "https://ai-job-application-agent-pi.vercel.app/*",
+    "https://generativelanguage.googleapis.com/*",
     "https://www.linkedin.com/*",
     "https://in.linkedin.com/*",
     "https://www.naukri.com/*",

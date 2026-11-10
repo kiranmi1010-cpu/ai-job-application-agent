@@ -41,7 +41,7 @@
       .hidden { display: none; }
       body.embedded { width: 100%; min-height: 100vh; }
       body.embedded header { padding-right: 46px; }
-      .ai-fit { margin-top: 8px; padding: 8px 10px; border-radius: 9px; background: #f5f3ff; border: 1px solid #ddd6fe; font-size: 11.5px; color: #3b0764; }
+      .ai-fit { padding: 8px 10px; border-radius: 9px; background: #f5f3ff; border: 1px solid #ddd6fe; font-size: 11.5px; color: #3b0764; }
       .ai-fit.fail { background: #fef2f2; border-color: #fecaca; color: #7f1d1d; }
       .stretch { font-size: 11px; color: #92400e; background: #fffbeb; border: 1px solid #fde68a; border-radius: 8px; padding: 7px 9px; margin-top: 6px; }
       .toggle { display: flex; gap: 8px; align-items: center; font-size: 11.5px; color: #0f172a; text-transform: none; letter-spacing: 0; font-weight: 500; }
@@ -113,6 +113,8 @@
           <button class="primary" id="rankBtn" style="flex:0 0 auto">Find my best jobs</button>
         </div>
         <div id="ranked" class="ranked"></div>
+        <button class="ghost" id="deepBtn" style="width:100%;margin-top:8px">Deep check the top jobs (opens and reads each one)</button>
+        <div id="deep" class="ranked"></div>
       </div>
 
       <div class="card">
@@ -162,10 +164,16 @@
           <div><label for="skills">Skills (comma separated)</label><input id="skills" /></div>
           <div><label for="summary">About you: experience, tools, achievements (used to answer questions)</label><textarea id="summary" style="min-height:110px" placeholder="E.g. Digital Marketing Manager at UNCareerHub (Oct 2025 - Jun 2026, part-time): lead generation, 45+ qualified leads in 2 weeks..."></textarea></div>
           <div><label for="voice">A sample of your own writing (so letters sound like you)</label><textarea id="voice" style="min-height:90px" placeholder="Paste a paragraph or two you wrote yourself: a LinkedIn post, an email, an answer you were happy with."></textarea></div>
-          <div><label for="languages">Languages you speak</label><input id="languages" placeholder="English (fluent), Hindi, Kannada" /></div>
+          <div><label for="languages">Languages you speak</label><input id="languages" placeholder="English (fluent), Hindi, Malayalam" /></div>
           <div><label for="linkedin">LinkedIn URL</label><input id="linkedin" /></div>
           <div><label for="city">Current city</label><input id="city" placeholder="Bengaluru" /></div>
           <div><label for="company">Current / last company</label><input id="company" /></div>
+          <div><label for="currentCtc">Current CTC (lakhs per year, number only)</label><input id="currentCtc" placeholder="5" /></div>
+          <div><label for="expectedCtc">Expected CTC (lakhs per year, number only)</label><input id="expectedCtc" placeholder="10" /></div>
+          <div><label for="minPay">Minimum pay you'll accept (LPA)</label><input id="minPay" placeholder="9" /></div>
+          <div><label for="notice">Notice period / joining</label><input id="notice" placeholder="Immediate" /></div>
+          <div><label for="geminiKey">Gemini API key (free from aistudio.google.com; JP uses it to write answers)</label><input id="geminiKey" type="password" placeholder="Paste your key here" /></div>
+          <div><label><input type="checkbox" id="autoChat" style="width:auto" checked /> Auto-fill Naukri recruiter questions (you still click Save)</label></div>
           <div><label for="portfolio">Portfolio / website</label><input id="portfolio" /></div>
           <div>
             <label for="resumeFile">Resume file (attached when you fill a form)</label>
