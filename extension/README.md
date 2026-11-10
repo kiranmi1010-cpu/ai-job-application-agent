@@ -19,7 +19,7 @@ fills the form. You press submit — nothing is submitted for you.
 - **Company careers pages:** Greenhouse, Lever, Ashby, Workday, SmartRecruiters, Workable, Freshteam, Keka, Darwinbox, Zoho Recruit (forms embedded in an iframe included).
 - **Any other site:** click the icon and it injects itself into that tab.
 
-## Floating launcher (new in 1.6)
+## Floating launcher (new in 1.8)
 
 You no longer need to click the toolbar icon. On job boards and careers pages a
 purple **JP** button appears in the bottom-right corner when JobPilot spots a job
@@ -71,5 +71,6 @@ is the part worth automating.
 | `manifest.json` | Manifest V3; boards and common ATS hosts get the script automatically, other sites through `activeTab` |
 | `content.js` | Extracts the posting; fills fields on request |
 | `launcher.js` | Floating JP button, auto pop-up card and in-page panel |
+| `answer-bank.md` | Your real stories for answers. Kept on your laptop only, never pushed to GitHub |
 | `background.js` | Calls `/api/gemini` for the cover letter |
 | `popup.html` / `popup.js` | The panel you click |

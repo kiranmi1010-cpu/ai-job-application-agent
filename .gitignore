@@ -3,3 +3,6 @@ node_modules/
 dist/
 build/
 *.log
+
+# Personal answer bank stays on the laptop only
+extension/answer-bank.md
