@@ -117,6 +117,16 @@ async function answerQuestions(questions, job, profile) {
   return { ok: true, answers: body.data?.answers || [] };
 }
 
+// Screening answers: the server writes them with the stronger model, checks
+// them for AI-sounding words and rewrites the flagged ones. Direct Gemini is
+// the fallback when the server is unreachable.
+async function bestAnswers(questions, job, profile) {
+  const withBank = ANSWER_BANK ? { ...profile, summary: `${profile.summary || ''}\n\nAnswer bank (real stories):\n${ANSWER_BANK}` } : profile;
+  const server = await answerQuestions(questions, job, withBank).catch(() => null);
+  if (server?.ok) return server;
+  return (await geminiAnswers(questions, job, profile).catch(() => null)) || server || { ok: false, error: 'Could not draft answers.' };
+}
+
 async function polishAnswer(question, draft, profile) {
   const response = await fetch(`${API_BASE}/api/gemini`, {
     method: 'POST',
@@ -399,7 +409,7 @@ async function autofill(tabId, job) {
   const needs = [];
   if (todo.length && (profile.summary || profile.skills)) {
     const questions = todo.map(({ key, question, type, options }) => ({ id: key, question, type, options }));
-    const reply = (await geminiAnswers(questions, job || {}, profile).catch(() => null)) || (await answerQuestions(questions, job || {}, profile));
+    const reply = await bestAnswers(questions, job || {}, profile);
     const byFrame = new Map();
     for (const a of reply?.answers || []) {
       const q = todo.find((t) => t.key === String(a.id));
@@ -475,7 +485,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     (async () => {
       try {
         const { profile = {} } = await chrome.storage.local.get('profile');
-        sendResponse((await geminiAnswers(message.questions || [], message.job || {}, profile)) || (await answerQuestions(message.questions || [], message.job || {}, profile)));
+        sendResponse(await bestAnswers(message.questions || [], message.job || {}, profile));
       } catch (error) {
         sendResponse({ ok: false, error: error?.message || String(error) });
       }

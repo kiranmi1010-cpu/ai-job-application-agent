@@ -9,8 +9,8 @@
 // Everything lives in a closed shadow root so the site's CSS cannot break it and
 // the site's scripts cannot read it.
 
-if (window.top === window && window.__jobpilotLauncher !== '1.9.0') {
-  window.__jobpilotLauncher = '1.9.0';
+if (window.top === window && window.__jobpilotLauncher !== '1.9.1') {
+  window.__jobpilotLauncher = '1.9.1';
 
   const DEFAULTS = { autoPop: true, autoFit: true, autoFill: true };
   const host = document.createElement('div');

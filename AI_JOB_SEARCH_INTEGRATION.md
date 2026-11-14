@@ -39,3 +39,17 @@ rewrites. `api/_lib/writingLint.ts` catches banned phrases, em-dashes and length
 code and hands each problem to the editor by name. Letters can be built around
 **your own points** and copy **your writing sample** (Settings, or Your details in
 the extension).
+
+## Anti-slop check (Nov 2026)
+
+`api/_lib/slopList.ts` holds the words and phrases AI models over-use compared with
+human writing, hand-picked from the MIT-licensed Antislop lists
+([sam-paech/slop-forensics](https://github.com/sam-paech/slop-forensics)). They are
+banned in every writing prompt, and `lintWriting` flags any that slip through so the
+editor pass rewrites them. Screening answers now get the same treatment as letters:
+the stronger writer model, then a rewrite of any flagged answer. The extension sends
+them through the server first (with your answer bank), and direct Gemini is only the
+fallback.
+
+Tried and left out: LanguageTool's free API (its terms forbid automated requests),
+slopless and write-good (each caught 1 of 8 clichés in a sample letter).
