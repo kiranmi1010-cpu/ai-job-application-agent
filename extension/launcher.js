@@ -9,10 +9,10 @@
 // Everything lives in a closed shadow root so the site's CSS cannot break it and
 // the site's scripts cannot read it.
 
-if (window.top === window && window.__jobpilotLauncher !== '1.8.0') {
-  window.__jobpilotLauncher = '1.8.0';
+if (window.top === window && window.__jobpilotLauncher !== '1.9.0') {
+  window.__jobpilotLauncher = '1.9.0';
 
-  const DEFAULTS = { autoPop: true, autoFit: true };
+  const DEFAULTS = { autoPop: true, autoFit: true, autoFill: true };
   const host = document.createElement('div');
   host.id = 'jobpilot-launcher-host';
   host.style.cssText = 'all: initial; position: fixed; z-index: 2147483646; right: 0; bottom: 0; width: 0; height: 0;';
@@ -59,6 +59,17 @@ if (window.top === window && window.__jobpilotLauncher !== '1.8.0') {
       .actions button { flex: 1; padding: 8px 10px; border-radius: 9px; font: 700 12px/1 ui-sans-serif, system-ui; cursor: pointer; }
       .primary { background: linear-gradient(180deg, #8a5fe0, #3b2470); color: #fff; border: none; }
       .ghost { background: #fff; color: #0f172a; border: 1px solid #cbd5e1; }
+      .auto { position: fixed; right: 20px; bottom: 88px; width: 320px; background: #fff; color: #0f172a;
+        border-radius: 14px; border: 1px solid #ddd6fe; box-shadow: 0 16px 40px rgba(15, 23, 42, .25); overflow: hidden; display: none; }
+      .auto.show { display: block; }
+      .auto header { padding: 9px 12px; background: radial-gradient(circle at 30% 0%, #5b3aa8 0%, #1a1230 70%); color: #f4efff;
+        display: flex; justify-content: space-between; align-items: center; font-size: 12px; font-weight: 700; }
+      .auto header button { background: none; border: none; color: #f4efff; font-size: 16px; cursor: pointer; }
+      .auto .body { padding: 10px 12px 12px; font-size: 12.5px; line-height: 1.45; }
+      .auto .state { padding: 8px 10px; border-radius: 10px; background: #f5f3ff; border: 1px solid #ddd6fe; margin: 6px 0 10px; color: #3b0764; }
+      .auto .state.done { background: #ecfdf5; border-color: #a7f3d0; color: #065f46; }
+      .auto .actions { flex-wrap: wrap; }
+      .auto .actions button { flex: 1 1 45%; }
       .panel {
         position: fixed; top: 12px; right: 12px; bottom: 12px; width: 400px; max-width: calc(100vw - 24px);
         background: #f8fafc; border-radius: 16px; box-shadow: 0 20px 60px rgba(15, 23, 42, .35);
@@ -79,6 +90,20 @@ if (window.top === window && window.__jobpilotLauncher !== '1.8.0') {
         <div class="actions">
           <button class="primary open">Open JobPilot</button>
           <button class="ghost later">Not now</button>
+        </div>
+      </div>
+    </div>
+    <div class="auto" role="dialog" aria-label="JP Autopilot">
+      <header><span class="a-head">JP Autopilot</span><button class="a-x" title="Hide">×</button></header>
+      <div class="body">
+        <p class="title a-title"></p>
+        <p class="meta a-meta"></p>
+        <div class="state a-state"></div>
+        <div class="actions">
+          <button class="primary a-applied">✓ I applied, next job</button>
+          <button class="ghost a-skip">Skip, next job</button>
+          <button class="ghost a-fill">Fill again</button>
+          <button class="ghost a-stop">Stop autopilot</button>
         </div>
       </div>
     </div>
@@ -202,14 +227,25 @@ if (window.top === window && window.__jobpilotLauncher !== '1.8.0') {
     lastUrl = url;
     hideToast();
     setBadge(null);
+    lastEmpty = -1;
+    filledHere = false;
+    markedHere = false;
+    clearTimeout(nextTimer);
+    await refreshQueue();
+    const onQueuedJob = !!openItem();
 
     const { job, isForm } = await detect();
     current = job;
-    if (!job && !isForm) {
+    if (!job && !isForm && !onQueuedJob) {
       fab.classList.remove('show');
+      auto.classList.remove('show');
       return;
     }
     fab.classList.add('show');
+    if (onQueuedJob) {
+      showAuto();
+      autoSet(isForm ? 'Application form found.' : 'Press <b>Apply</b> / <b>Easy Apply</b>. JP fills the form as soon as it opens.');
+    }
 
     const prefs = await settings();
     const key = job ? `${job.title}|${job.company}` : url;
@@ -220,7 +256,9 @@ if (window.top === window && window.__jobpilotLauncher !== '1.8.0') {
     $('.meta').textContent = job ? [job.company, job.location].filter(Boolean).join(' · ') : 'JobPilot can answer the questions and fill this form.';
     $('.toast header span').textContent = job ? 'JobPilot spotted a job' : 'JobPilot can fill this form';
 
-    if (prefs.autoPop && !alreadyPopped) {
+    if (isForm && prefs.autoFill) runFill();
+
+    if (prefs.autoPop && !alreadyPopped && !onQueuedJob && !isForm) {
       toast.classList.add('show');
       scheduleHide();
       chrome.storage.local.set({ popped: [key, ...popped].slice(0, 300) }).catch(() => {});
@@ -241,6 +279,158 @@ if (window.top === window && window.__jobpilotLauncher !== '1.8.0') {
       $('.fit').innerHTML = 'Open JobPilot to check your fit and draft a letter.';
     }
   }
+
+
+  // --- Autopilot -------------------------------------------------------------
+  // Fills every application form it sees (each step of a multi-step form too),
+  // never presses a button. When the site says the application went through,
+  // the job is marked applied and the next queued job opens.
+  const auto = $('.auto');
+  const ATS_FRAME = /greenhouse|lever\.co|myworkday|ashbyhq|smartrecruiters|workable|icims|zohorecruit|keka|darwinbox|freshteam|successfactors|taleo/i;
+  const APPLIED_TEXT = /application (?:was |has been )?(?:sent|submitted|received)|thank(?:s| you) for (?:applying|your application)|successfully applied|applied successfully|you(?:'|’)ve applied/i;
+  let autoState = { current: '', queue: [] };
+  let filling = false;
+  let lastEmpty = -1;
+  let filledHere = false;
+  let markedHere = false;
+  let nextTimer = null;
+
+  const autoSet = (html, done = false) => {
+    const box = $('.a-state');
+    box.innerHTML = html;
+    box.classList.toggle('done', done);
+  };
+
+  function emptyCount() {
+    const fields = Array.from(document.querySelectorAll('input:not([type="hidden"]):not([type="search"]):not([type="submit"]):not([type="button"]), textarea, select')).filter(isShown);
+    const empty = fields.filter((f) => (f.type === 'radio' || f.type === 'checkbox' ? false : !String(f.value || '').trim())).length;
+    const frames = Array.from(document.querySelectorAll('iframe')).filter((f) => ATS_FRAME.test(f.src || '')).length;
+    return empty + frames;
+  }
+
+  const hasForm = () => looksLikeApplication() || Array.from(document.querySelectorAll('iframe')).some((f) => ATS_FRAME.test(f.src || ''));
+
+  async function refreshQueue() {
+    try {
+      const r = await chrome.runtime.sendMessage({ type: 'QUEUE_STATE' });
+      if (r?.ok) autoState = r;
+    } catch {}
+    return autoState;
+  }
+
+  const openItem = () => autoState.queue.find((q) => q.url === autoState.current && q.status === 'open');
+
+  function showAuto() {
+    const item = openItem();
+    const total = autoState.queue.filter((q) => ['queued', 'open'].includes(q.status) || (q.status !== 'queued' && q.at > Date.now() - 12 * 3600e3)).length;
+    const doneCount = autoState.queue.filter((q) => ['applied', 'skipped'].includes(q.status) && q.at > Date.now() - 12 * 3600e3).length;
+    $('.a-head').textContent = item ? `JP Autopilot · job ${doneCount + 1} of ${total}` : 'JP filled this form';
+    $('.a-title').textContent = item?.title || current?.title || document.title.slice(0, 80);
+    $('.a-meta').textContent = item ? [item.company, item.reason].filter(Boolean).join(' · ') : 'Check the answers, then press Apply / Submit yourself.';
+    $('.a-skip').style.display = item ? '' : 'none';
+    $('.a-stop').style.display = item ? '' : 'none';
+    $('.a-applied').textContent = item ? '✓ I applied, next job' : '✓ I applied (log it)';
+    hideToast();
+    auto.classList.add('show');
+  }
+
+  async function runFill() {
+    if (filling) return;
+    filling = true;
+    showAuto();
+    autoSet('Filling your details, resume and answers…');
+    try {
+      const r = await chrome.runtime.sendMessage({ type: 'AUTOFILL', job: { ...(current || {}), url: openItem()?.url || location.href } });
+      if (!r?.ok) {
+        autoSet(esc(r?.error || 'Could not fill this form.'));
+      } else {
+        filledHere = true;
+        const parts = [
+          r.filled && `${r.filled} detail(s)`,
+          r.attached && 'resume attached',
+          r.answered && `${r.answered} answer(s)`,
+          r.letter && 'cover letter',
+        ].filter(Boolean);
+        const needs = (r.needs || []).slice(0, 3).map((q) => `<br>• ${esc(q)}`).join('');
+        autoSet(
+          (parts.length ? `<b>Filled:</b> ${parts.join(', ')}.` : 'Nothing new to fill on this step.') +
+            (needs ? `<br><b>Needs you:</b>${needs}` : '') +
+            '<br>Check it, then press <b>Next / Apply / Submit</b> yourself.',
+          !needs
+        );
+      }
+    } catch (error) {
+      autoSet('Extension was updated: refresh this page (F5).');
+    } finally {
+      lastEmpty = emptyCount();
+      filling = false;
+    }
+  }
+
+  async function goNext(status) {
+    clearTimeout(nextTimer);
+    await chrome.runtime.sendMessage({ type: 'QUEUE_MARK', status, job: { ...(current || {}), url: location.href } }).catch(() => {});
+    await refreshQueue();
+    if (!autoState.queue.some((q) => q.status === 'queued')) {
+      autoSet('That was the last job in the queue. 🎉 Run a Deep check on a search page to fill it again.', true);
+      $('.a-head').textContent = 'JP Autopilot · queue done';
+      return;
+    }
+    autoSet('Opening the next job…');
+    chrome.runtime.sendMessage({ type: 'QUEUE_NEXT' }).catch(() => {});
+  }
+
+  function checkApplied() {
+    if (markedHere || !(filledHere || openItem())) return;
+    const textNow = (document.body?.innerText || '').slice(0, 20000);
+    if (!APPLIED_TEXT.test(textNow)) return;
+    markedHere = true;
+    showAuto();
+    if (!openItem()) {
+      chrome.runtime.sendMessage({ type: 'QUEUE_MARK', status: 'applied', job: { ...(current || {}), url: location.href } }).catch(() => {});
+      autoSet('Applied ✓ Logged in your tracker.', true);
+      return;
+    }
+    autoSet('Applied ✓ Opening the next job in 5 seconds… <a href="#" class="a-cancel">stay here</a>', true);
+    $('.a-cancel')?.addEventListener('click', (e) => {
+      e.preventDefault();
+      clearTimeout(nextTimer);
+      autoSet('Staying on this page. Press "next job" when ready.', true);
+    });
+    nextTimer = setTimeout(() => goNext('applied'), 5000);
+  }
+
+  let watchPending = false;
+  new MutationObserver(() => {
+    if (watchPending) return;
+    watchPending = true;
+    setTimeout(async () => {
+      watchPending = false;
+      const prefs = await settings();
+      if (prefs.autoFill && !filling && hasForm()) {
+        const empty = emptyCount();
+        if (empty > lastEmpty) runFill();
+      }
+      checkApplied();
+    }, 1500);
+  }).observe(document.documentElement, { childList: true, subtree: true });
+
+  $('.a-applied').addEventListener('click', () => {
+    markedHere = true;
+    if (openItem()) goNext('applied');
+    else {
+      chrome.runtime.sendMessage({ type: 'QUEUE_MARK', status: 'applied', job: { ...(current || {}), url: location.href } }).catch(() => {});
+      autoSet('Logged as applied ✓', true);
+    }
+  });
+  $('.a-skip').addEventListener('click', () => goNext('skipped'));
+  $('.a-fill').addEventListener('click', runFill);
+  $('.a-x').addEventListener('click', () => auto.classList.remove('show'));
+  $('.a-stop').addEventListener('click', async () => {
+    clearTimeout(nextTimer);
+    await chrome.runtime.sendMessage({ type: 'QUEUE_MARK', status: 'queued' }).catch(() => {});
+    auto.classList.remove('show');
+  });
 
   fab.addEventListener('click', () => (panel.classList.contains('show') ? closePanel() : openPanel()));
   $('.open').addEventListener('click', openPanel);

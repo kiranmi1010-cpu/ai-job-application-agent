@@ -1,7 +1,7 @@
 // Re-run when the extension was updated: an older copy left in the tab must
 // not stop the new version from loading.
-if (window.__jobpilotAssist !== '1.8.0') {
-window.__jobpilotAssist = '1.8.0';
+if (window.__jobpilotAssist !== '1.9.0') {
+window.__jobpilotAssist = '1.9.0';
 // JobPilot Assist — content script.
 //
 // Reads the posting you are looking at (schema.org JobPosting when the page
@@ -463,12 +463,15 @@ function listQuestions() {
       const options = members.map((m) => labelText(m) || m.value).filter(Boolean);
       const id = 'q' + n++;
       members.forEach((m) => m.setAttribute('data-jobpilot-q', id));
-      out.push({ id, question, type, options });
+      const picked = members.filter((m) => m.checked).map((m) => labelText(m) || m.value);
+      out.push({ id, question, type, options, current: picked.join('|') });
       continue;
     }
 
     const question = questionText(field);
     if (!question || CONTACT.test(question)) continue;
+    // A cover-letter box gets a full letter, not a one-line answer.
+    if (type === 'textarea' && /cover\s*letter|coverletter|cover_letter/i.test(question + ' ' + describe(field))) continue;
     const id = 'q' + n++;
     field.setAttribute('data-jobpilot-q', id);
     out.push({
@@ -665,6 +668,11 @@ if (location.hostname.endsWith('naukri.com') && window === window.top) {
 }
 
 window.__jobpilotQuestions = listQuestions;
+// Autopilot: is there an empty cover-letter box on this form?
+window.__jobpilotNeedsCover = () =>
+  Array.from(document.querySelectorAll('textarea')).some(
+    (t) => visible(t) && !t.disabled && !t.value.trim() && hits(describe(t), FIELD_HINTS.cover)
+  );
 window.__jobpilotAnswer = answerQuestions;
 
 // Lets the popup fill every frame (embedded Greenhouse/Lever forms live in iframes).
