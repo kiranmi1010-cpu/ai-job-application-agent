@@ -256,6 +256,10 @@ Return JSON: {"polished":"<improved answer>","changes":["<each change, short>"],
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// A page that never finishes loading must not stall the whole deep check.
+const withTimeout = (promise, ms) =>
+  Promise.race([promise, new Promise((_, reject) => setTimeout(() => reject(new Error('timed out')), ms))]);
+
 async function readListing(url) {
   const tab = await chrome.tabs.create({ url, active: false });
   try {
@@ -265,13 +269,13 @@ async function readListing(url) {
       await sleep(500);
     }
     await sleep(2000); // let the posting render
-    const [res] = await chrome.scripting.executeScript({
+    const [res] = await withTimeout(chrome.scripting.executeScript({
       target: { tabId: tab.id },
       func: () => {
         const main = document.querySelector('main') || document.body;
         return { title: document.title, text: (main.innerText || '').replace(/\s+\n/g, '\n').slice(0, 3500) };
       },
-    });
+    }), 8000);
     return res?.result || { title: '', text: '' };
   } finally {
     chrome.tabs.remove(tab.id).catch(() => {});
@@ -283,7 +287,7 @@ async function deepCheck(jobs) {
   const list = jobs.slice(0, 20);
   const read = [];
   for (let i = 0; i < list.length; i++) {
-    await chrome.storage.local.set({ deepCheck: { status: 'reading', done: i, total: list.length, results: [] } });
+    await chrome.storage.local.set({ deepCheck: { status: 'reading', done: i, total: list.length, results: [], at: Date.now() } });
     try {
       const page = await readListing(list[i].url);
       read.push({ i, title: list[i].title, company: list[i].company, url: list[i].url, page: page.text });
@@ -291,7 +295,7 @@ async function deepCheck(jobs) {
       read.push({ i, title: list[i].title, company: list[i].company, url: list[i].url, page: list[i].snippet || '' });
     }
   }
-  await chrome.storage.local.set({ deepCheck: { status: 'judging', done: list.length, total: list.length, results: [] } });
+  await chrome.storage.local.set({ deepCheck: { status: 'judging', done: list.length, total: list.length, results: [], at: Date.now() } });
 
   const prompt = `You screen job postings for one candidate. Be strict and honest, like a careful career advisor.
 For each posting, read the FULL text: the real experience requirement is often in the description, not the header (e.g. a card says "0-1 years" but the description asks for "6+ years"). Check:

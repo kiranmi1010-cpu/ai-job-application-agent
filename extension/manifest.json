@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "JobPilot Assist",
-  "version": "1.9.1",
+  "version": "1.9.2",
   "description": "Spots the job you are viewing, pops up with an AI fit check, drafts letters and screening answers in your voice, and fills the application form, resume included.",
   "permissions": [
     "storage",
@@ -35,6 +35,7 @@
     "https://*.zohorecruit.com/*",
     "https://www.instahyre.com/*",
     "https://www.foundit.in/*",
+    "https://foundit.in/*",
     "https://cutshort.io/*",
     "https://internshala.com/*",
     "https://www.iimjobs.com/*",
@@ -72,6 +73,7 @@
         "https://*.zohorecruit.com/*",
         "https://www.instahyre.com/*",
         "https://www.foundit.in/*",
+        "https://foundit.in/*",
         "https://cutshort.io/*",
         "https://internshala.com/*",
         "https://www.iimjobs.com/*",

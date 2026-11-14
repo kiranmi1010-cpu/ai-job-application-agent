@@ -575,6 +575,12 @@ const esc = (v) => String(v || '').replace(/[<>&"]/g, '');
 
 function renderDeep(state) {
   if (!state) return;
+  // A run cut off by an extension reload or Chrome stopping the background
+  // worker leaves an old "reading" state behind: treat it as stopped.
+  if (['reading', 'judging'].includes(state.status) && !(state.at > Date.now() - 90000)) {
+    state = { status: 'error', error: 'the last check was interrupted. Press Deep check again.', results: [] };
+    ui.deep.disabled = false;
+  }
   if (state.status === 'reading') {
     ui.deepOut.innerHTML = `<span class="muted">Reading job ${state.done + 1} of ${state.total} (opening each one in the background)…</span>`;
   } else if (state.status === 'judging') {
@@ -615,7 +621,7 @@ chrome.storage.onChanged.addListener((changes) => {
 });
 chrome.storage.local.get('deepCheck').then(({ deepCheck }) => {
   renderDeep(deepCheck);
-  if (deepCheck && !['done', 'error'].includes(deepCheck.status)) ui.deep.disabled = true;
+  if (deepCheck && !['done', 'error'].includes(deepCheck.status) && deepCheck.at > Date.now() - 90000) ui.deep.disabled = true;
 });
 ui.deep.addEventListener('click', deepCheckPage);
 
