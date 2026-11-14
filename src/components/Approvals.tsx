@@ -72,7 +72,7 @@ export default function Approvals() {
   const handleApprove = async (id: string) => {
     setApprovals((prev) => prev.filter((item) => item.id !== id));
     setSelectedApproval(null);
-    await dbHelpers.updateApplicationStatus(Number(id), 'submitted');
+    await dbHelpers.updateApplicationStatus(Number(id), 'approved');
   };
 
   const handleReject = async (id: string) => {
@@ -85,7 +85,7 @@ export default function Approvals() {
     const ids = approvals.map((item) => item.id);
     setApprovals([]);
     setSelectedApproval(null);
-    await Promise.all(ids.map((id) => dbHelpers.updateApplicationStatus(Number(id), 'submitted')));
+    await Promise.all(ids.map((id) => dbHelpers.updateApplicationStatus(Number(id), 'approved')));
   };
 
   const getPriorityColor = (priority: string) => {

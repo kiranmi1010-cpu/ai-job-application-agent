@@ -54,6 +54,12 @@ const ui = {
   autoPop: el('autoPop'),
   autoFit: el('autoFit'),
   aiFit: el('aiFit'),
+  autoFill: el('autoFill'),
+  queueBtn: el('queueBtn'),
+  autoInfo: el('autoInfo'),
+  autoStart: el('autoStart'),
+  autoClear: el('autoClear'),
+  autoLog: el('autoLog'),
   stretches: el('stretches'),
 };
 
@@ -501,6 +507,7 @@ async function loadProfile() {
   const { launcher = {} } = await chrome.storage.local.get('launcher');
   ui.autoPop.checked = launcher.autoPop !== false;
   ui.autoFit.checked = launcher.autoFit !== false;
+  ui.autoFill.checked = launcher.autoFill !== false;
   ui.currentCtc.value = profile.currentCtc || '';
   ui.expectedCtc.value = profile.expectedCtc || '';
   ui.notice.value = profile.notice || '';
@@ -536,7 +543,7 @@ async function saveProfile() {
     await chrome.storage.local.set({
       profile,
       geminiKey: ui.geminiKey.value.trim(),
-      launcher: { autoPop: ui.autoPop.checked, autoFit: ui.autoFit.checked },
+      launcher: { autoPop: ui.autoPop.checked, autoFit: ui.autoFit.checked, autoFill: ui.autoFill.checked },
     });
   } catch (error) {
     ui.saveProfile.textContent = 'Could not save: ' + (error?.message || error);
@@ -583,6 +590,9 @@ function renderDeep(state) {
       </button>`).join('');
     ui.deepOut.querySelectorAll('.rjob').forEach((b) => b.addEventListener('click', () => chrome.tabs.create({ url: b.dataset.u })));
     const good = state.results.filter((r) => r.verdict === 'good').length;
+    const worth = state.results.filter((r) => r.verdict !== 'skip').length;
+    ui.queueBtn.classList.toggle('hidden', !worth);
+    ui.queueBtn.textContent = `Queue the ${worth} worth applying to and start autopilot`;
     setStatus(`Deep check done: ${good} worth applying to. Open one, click Apply, and JP fills the questions.`, 'ok');
   }
 }
@@ -608,6 +618,49 @@ chrome.storage.local.get('deepCheck').then(({ deepCheck }) => {
   if (deepCheck && !['done', 'error'].includes(deepCheck.status)) ui.deep.disabled = true;
 });
 ui.deep.addEventListener('click', deepCheckPage);
+
+// --- Autopilot queue and tracker ------------------------------------------------
+async function renderQueue() {
+  const { queue = [] } = await chrome.storage.local.get('queue');
+  const waiting = queue.filter((q) => q.status === 'queued').length;
+  const applied = queue.filter((q) => q.status === 'applied');
+  const week = applied.filter((q) => q.at > Date.now() - 7 * 864e5).length;
+  ui.autoInfo.textContent = `${waiting} job(s) waiting · ${week} applied this week · ${applied.length} applied in total. JP opens each job and fills the application; you press Apply.`;
+  ui.autoStart.disabled = !waiting;
+  const icon = { applied: '✓', skipped: '–' };
+  ui.autoLog.innerHTML = queue
+    .filter((q) => icon[q.status])
+    .sort((a, b) => b.at - a.at)
+    .slice(0, 40)
+    .map((q) => `<button class="rjob" data-u="${esc(q.url)}"><span class="score" style="background:${q.status === 'applied' ? '#059669' : '#94a3b8'}">${icon[q.status]}</span>
+      <span><b>${esc(q.title)}</b><small>${esc([q.company, new Date(q.at).toLocaleDateString()].filter(Boolean).join(' · '))}</small></span></button>`)
+    .join('') || '<span class="muted">Nothing yet.</span>';
+  ui.autoLog.querySelectorAll('.rjob').forEach((b) => b.addEventListener('click', () => b.dataset.u && chrome.tabs.create({ url: b.dataset.u })));
+}
+
+async function startAutopilot() {
+  const tab = await getActiveTab();
+  const r = await chrome.runtime.sendMessage({ type: 'QUEUE_NEXT', tabId: tab?.id });
+  if (r?.done) setStatus('No jobs waiting. Run a Deep check on a search page first.', 'error');
+  else setStatus(`Opening ${r?.item?.title || 'the next job'}… Press Apply there; JP fills the form.`, 'ok');
+}
+
+ui.queueBtn.addEventListener('click', async () => {
+  const { deepCheck } = await chrome.storage.local.get('deepCheck');
+  const jobs = (deepCheck?.results || []).filter((r) => r.verdict !== 'skip');
+  const r = await chrome.runtime.sendMessage({ type: 'QUEUE_ADD', jobs });
+  setStatus(`Added ${r?.added || 0} job(s) to the queue.`, 'ok');
+  await startAutopilot();
+});
+ui.autoStart.addEventListener('click', startAutopilot);
+ui.autoClear.addEventListener('click', async () => {
+  const { queue = [] } = await chrome.storage.local.get('queue');
+  await chrome.storage.local.set({ queue: queue.filter((q) => q.status !== 'queued') });
+});
+chrome.storage.onChanged.addListener((changes) => {
+  if (changes.queue) renderQueue();
+});
+renderQueue();
 
 ui.answer.addEventListener('click', answerForm);
 ui.fillAnswers.addEventListener('click', fillAnswers);

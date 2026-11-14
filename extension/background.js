@@ -270,7 +270,7 @@ async function readListing(url) {
 
 async function deepCheck(jobs) {
   const { profile = {} } = await chrome.storage.local.get('profile');
-  const list = jobs.slice(0, 12);
+  const list = jobs.slice(0, 20);
   const read = [];
   for (let i = 0; i < list.length; i++) {
     await chrome.storage.local.set({ deepCheck: { status: 'reading', done: i, total: list.length, results: [] } });
@@ -307,7 +307,142 @@ Return JSON: {"results":[{"i":0,"verdict":"good|maybe|skip","score":0-100,"pay":
   return results;
 }
 
+
+// --- Autopilot -----------------------------------------------------------------
+//
+// JP collects the good jobs into a queue, opens them one by one, and fills every
+// application form it sees: your details, resume, screening questions and the
+// cover letter. It never presses Apply, Submit or Next: you do, which keeps the
+// job sites from flagging the account as a bot. When a "thanks for applying"
+// message appears, JP marks the job applied and moves on.
+//
+// The queue doubles as the tracker: every item keeps its status
+// (queued, open, applied, skipped) and when it changed.
+
+async function getQueue() {
+  const { queue = [], queueCurrent = '' } = await chrome.storage.local.get(['queue', 'queueCurrent']);
+  return { queue, current: queueCurrent };
+}
+
+async function queueAdd(jobs) {
+  const { queue } = await getQueue();
+  const known = new Set(queue.map((q) => q.url));
+  const fresh = jobs
+    .filter((j) => j.url && !known.has(j.url) && known.add(j.url))
+    .map((j) => ({
+      url: j.url,
+      title: j.title || '',
+      company: j.company || '',
+      verdict: j.verdict || '',
+      reason: j.reason || '',
+      status: 'queued',
+      at: Date.now(),
+    }));
+  await chrome.storage.local.set({ queue: [...queue, ...fresh].slice(-500) });
+  return fresh.length;
+}
+
+async function queueNext(tabId) {
+  const { queue } = await getQueue();
+  const next = queue.find((q) => q.status === 'queued');
+  if (!next) {
+    await chrome.storage.local.set({ queueCurrent: '' });
+    return { ok: true, done: true };
+  }
+  next.status = 'open';
+  next.at = Date.now();
+  await chrome.storage.local.set({ queue, queueCurrent: next.url });
+  if (tabId) await chrome.tabs.update(tabId, { url: next.url });
+  else await chrome.tabs.create({ url: next.url });
+  const left = queue.filter((q) => q.status === 'queued').length;
+  return { ok: true, item: next, left };
+}
+
+// Mark the current queue job (or, outside the queue, the page's job) as
+// applied or skipped. A job applied to outside the queue is added to the log.
+async function queueMark(status, job) {
+  const { queue, current } = await getQueue();
+  let item = queue.find((q) => q.url === current && q.status === 'open');
+  if (!item && job?.url) item = queue.find((q) => q.url === job.url);
+  if (!item && job && status === 'applied') {
+    item = { url: job.url || '', title: job.title || '', company: job.company || '', verdict: '', reason: '', status, at: Date.now() };
+    queue.push(item);
+  }
+  if (item) {
+    item.status = status;
+    item.at = Date.now();
+  }
+  await chrome.storage.local.set({ queue: queue.slice(-500), queueCurrent: item && item.url === current ? '' : current });
+  return { ok: true };
+}
+
+async function inFrames(tabId, func, args = []) {
+  const results = await chrome.scripting.executeScript({ target: { tabId, allFrames: true }, func, args });
+  return results.map((r) => ({ frameId: r.frameId, result: r.result }));
+}
+
+async function autofill(tabId, job) {
+  const { profile = {}, resume = null } = await chrome.storage.local.get(['profile', 'resume']);
+  if (!profile.name && !profile.email) return { ok: false, error: 'Fill in "Your details" first.' };
+
+  // 1. Contact details and resume, in every frame (company forms often sit in an iframe).
+  const filledRes = await inFrames(tabId, (p) => (window.__jobpilotFill ? window.__jobpilotFill(p) : null), [{ ...profile, resume }]);
+  const filled = filledRes.reduce((n, r) => n + (r.result?.filled || 0), 0);
+  const attached = filledRes.some((r) => r.result?.attached);
+
+  // 2. Screening questions that are still empty.
+  const qRes = await inFrames(tabId, () => (window.__jobpilotQuestions ? window.__jobpilotQuestions() : []));
+  const todo = qRes.flatMap((r) =>
+    (r.result || []).filter((q) => !String(q.current || '').trim()).map((q) => ({ ...q, key: `${r.frameId}:${q.id}`, frameId: r.frameId }))
+  );
+  let answered = 0;
+  const needs = [];
+  if (todo.length && (profile.summary || profile.skills)) {
+    const questions = todo.map(({ key, question, type, options }) => ({ id: key, question, type, options }));
+    const reply = (await geminiAnswers(questions, job || {}, profile).catch(() => null)) || (await answerQuestions(questions, job || {}, profile));
+    const byFrame = new Map();
+    for (const a of reply?.answers || []) {
+      const q = todo.find((t) => t.key === String(a.id));
+      if (!q) continue;
+      if (a.needs_input) needs.push(q.question);
+      if (!a.answer) continue;
+      if (!byFrame.has(q.frameId)) byFrame.set(q.frameId, []);
+      byFrame.get(q.frameId).push({ id: q.id, answer: a.answer });
+    }
+    for (const [frameId, answers] of byFrame) {
+      const [r] = await chrome.scripting.executeScript({
+        target: { tabId, frameIds: [frameId] },
+        func: (list) => (window.__jobpilotAnswer ? window.__jobpilotAnswer(list) : 0),
+        args: [answers],
+      });
+      answered += r?.result || 0;
+    }
+  }
+
+  // 3. An empty cover-letter box: write the letter and put it in.
+  let letter = false;
+  const coverRes = await inFrames(tabId, () => (window.__jobpilotNeedsCover ? window.__jobpilotNeedsCover() : false));
+  if (coverRes.some((r) => r.result) && job?.title) {
+    const draft = await draftLetter(job, profile, '').catch(() => null);
+    const body = draft?.ok ? draft.letter : (await geminiLetter(job, profile).catch(() => null))?.letter;
+    if (body) {
+      const res = await inFrames(tabId, (p) => (window.__jobpilotFill ? window.__jobpilotFill(p) : null), [{ coverLetter: body }]);
+      letter = res.some((r) => r.result?.filled);
+    }
+  }
+  return { ok: true, filled, attached, answered, letter, needs, left: todo.length - answered };
+}
+
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  const reply = (work) => {
+    work.then(sendResponse, (error) => sendResponse({ ok: false, error: error?.message || String(error) }));
+    return true;
+  };
+  if (message?.type === 'AUTOFILL') return reply(autofill(_sender.tab?.id ?? message.tabId, message.job));
+  if (message?.type === 'QUEUE_ADD') return reply(queueAdd(message.jobs || []).then((added) => ({ ok: true, added })));
+  if (message?.type === 'QUEUE_NEXT') return reply(queueNext(message.tabId ?? _sender.tab?.id));
+  if (message?.type === 'QUEUE_MARK') return reply(queueMark(message.status, message.job));
+  if (message?.type === 'QUEUE_STATE') return reply(getQueue().then((q) => ({ ok: true, ...q })));
   if (message?.type === 'FIT_CHECK') {
     (async () => {
       try {

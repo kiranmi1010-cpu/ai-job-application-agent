@@ -115,6 +115,17 @@
         <div id="ranked" class="ranked"></div>
         <button class="ghost" id="deepBtn" style="width:100%;margin-top:8px">Deep check the top jobs (opens and reads each one)</button>
         <div id="deep" class="ranked"></div>
+        <button class="primary hidden" id="queueBtn" style="width:100%;margin-top:8px">Queue the good ones and start autopilot</button>
+      </div>
+
+      <div class="card">
+        <p class="job-title" style="font-size:13px">Autopilot</p>
+        <p class="job-meta" id="autoInfo">JP opens each queued job and fills the application. You press Apply.</p>
+        <div class="row" style="margin-top:8px">
+          <button class="primary" id="autoStart">Start / continue</button>
+          <button class="ghost" id="autoClear">Clear waiting jobs</button>
+        </div>
+        <details style="margin-top:8px"><summary class="job-meta">Applied and skipped</summary><div id="autoLog" class="ranked"></div></details>
       </div>
 
       <div class="card">
@@ -182,6 +193,7 @@
           </div>
           <label class="toggle"><input type="checkbox" id="autoPop" checked /> Pop up automatically when I open a job</label>
           <label class="toggle"><input type="checkbox" id="autoFit" checked /> Run an AI fit check on every job I open</label>
+          <label class="toggle"><input type="checkbox" id="autoFill" checked /> Fill application forms automatically (I still press Apply)</label>
           <button class="ghost" id="saveProfileBtn">Save details</button>
         </div>
       </details>

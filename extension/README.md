@@ -19,6 +19,19 @@ fills the form. You press submit — nothing is submitted for you.
 - **Company careers pages:** Greenhouse, Lever, Ashby, Workday, SmartRecruiters, Workable, Freshteam, Keka, Darwinbox, Zoho Recruit (forms embedded in an iframe included).
 - **Any other site:** click the icon and it injects itself into that tab.
 
+## Autopilot (new in 1.9): JP fills, you press Apply
+
+1. Open a job search on LinkedIn or Naukri, open the JP panel, press **Find my best jobs**,
+   then **Deep check the top jobs** (reads up to 20 listings).
+2. Press **Queue the good ones and start autopilot**. JP opens the first job.
+3. Press **Apply / Easy Apply**. JP fills each step as it appears: your details, resume,
+   screening questions and the cover letter. It never presses Next, Apply or Submit.
+4. When the site says the application went through, JP marks it applied and opens the
+   next job 5 seconds later. **Skip** moves on without applying.
+
+Everything you applied to or skipped is listed under **Autopilot → Applied and skipped**.
+Turn automatic filling off under Your details.
+
 ## Floating launcher (new in 1.8)
 
 You no longer need to click the toolbar icon. On job boards and careers pages a
