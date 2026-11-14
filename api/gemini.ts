@@ -2,6 +2,7 @@ import { GoogleGenerativeAI } from '@google/generative-ai';
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { guardPosting, fencePosting } from './_lib/postingGuard';
 import { lintWriting, autoFix } from './_lib/writingLint';
+import { SLOP_WORDS } from './_lib/slopList';
 
 // Initialize Gemini client
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || '');
@@ -332,6 +333,7 @@ const WRITING_RULES = `Writing rules (follow all of them):
 4. No apologetic or overly humble language. Not "I think I could contribute" but "I bring X, shown by Y".
 5. No unverified company claims. Do not invent company products, partnerships, news or values. Only use what the job posting itself says about the company; otherwise speak in general terms.
 6. Reframe emphasis, never substance (the interview backtrack test): the candidate must be able to explain every sentence in an interview without saying "well, what I actually meant was...". Reordering and emphasising relevant experience is fine. Never claim experience, tools, numbers or domains the resume does not contain.
+7. Never use these words, which mark text as AI-written: ${SLOP_WORDS.join(', ')}. Nor "plays a key role", "not just X, but Y", "in today's...".
 Tone: warm but direct, first person, active voice, conversational professional. Demonstrate, don't state ("I am a team player" becomes a concrete example).`;
 
 function candidateBlock(resume: any): string {
@@ -738,7 +740,7 @@ Candidate profile:
 - Current / last company: ${profile.company || ''}
 - Roles wanted: ${profile.roles || ''}
 - Skills: ${profile.skills || ''}
-- About / experience (the candidate's own words): ${String(profile.summary || '').slice(0, 2500)}
+- About / experience (the candidate's own words): ${String(profile.summary || '').slice(0, 7000)}
 
 Job (for context): ${job.title || ''} at ${job.company || ''}
 
@@ -767,16 +769,38 @@ Return ONLY valid JSON, no markdown:
   const cleaned = stripFences(raw);
   try {
     const parsed = JSON.parse(cleaned);
-    const answers = (Array.isArray(parsed?.answers) ? parsed.answers : []).map((a: any) => ({
-      ...a,
-      answer: autoFix(String(a?.answer || '')),
-    }));
-    return { success: true, data: { answers }, provider };
-  } catch (e) {
-    return { success: false, error: 'Failed to parse AI response', raw: cleaned, provider };
+    const answers: any[] = Array.isArray(parsed?.answers) ? parsed.answers : [];
+    // Editor pass, only for written answers the lint flags: one extra call at most.
+    const flagged = answers
+      .map((a) => ({ a, q: list.find((q) => q.id === String(a?.id)), issues: lintWriting(String(a?.answer || ''), 200).issues }))
+      .filter((x) => x.q && /text/.test(x.q.type) && String(x.a.answer || '').length > 40 && x.issues.length);
+    if (flagged.length) {
+      const fixPrompt = `Rewrite these answers to a job application's screening questions so they sound like a thoughtful person, not an AI.
+Keep every fact and the meaning exactly; add nothing new. Fix each listed problem. Plain words, varied sentences, same length or shorter.
+${WRITING_RULES}
+
+${JSON.stringify(flagged.map((x) => ({ id: x.a.id, question: x.q!.question, answer: x.a.answer, problems: x.issues })))}
+
+Return ONLY valid JSON: {"answers":[{"id":"<id>","answer":"<rewritten>"}]}`;
+      try {
+        const fixed = JSON.parse(stripFences((await generateWriting(fixPrompt, 0.4)).text));
+        for (const f of fixed?.answers || []) {
+          const target = answers.find((a) => String(a.id) === String(f.id));
+          if (target && f.answer) target.answer = f.answer;
+        }
+      } catch (error: any) {
+        console.error('Answer editor pass failed, keeping drafts:', error?.message || error);
+      }
+    }
+    return {
+      success: true,
+      data: { answers: answers.map((a) => ({ ...a, answer: autoFix(String(a?.answer || '')) })) },
+      provider,
+    };
+  } catch {
+    return { success: false, error: 'Failed to parse response', raw: cleaned, provider };
   }
 }
-
 
 // Kiran's way of writing: he writes the draft himself, then asks AI to check
 // grammar and suggest improvements while keeping the essence. This edits his
